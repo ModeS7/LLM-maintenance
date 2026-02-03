@@ -69,7 +69,7 @@ def get_engine_image_base64():
 ENGINE_IMAGE_DATA = None  # Will be loaded on first use
 
 
-def get_engine_html():
+def get_engine_html(time_index: int = None):
     """Generate HTML for engine display with gauges."""
     global ENGINE_IMAGE_DATA
 
@@ -78,7 +78,10 @@ def get_engine_html():
         ENGINE_IMAGE_DATA = get_engine_image_base64()
 
     if detector:
-        status = detector.get_current_status()
+        if time_index is not None:
+            status = detector.get_status_at_index(time_index)
+        else:
+            status = detector.get_current_status()
         rpm = max(800, int(1200 + status.get('speed', 0) * 50))
         power_mw = status.get('total_power', 0) / 1000
 
@@ -93,34 +96,34 @@ def get_engine_html():
 
     alerts_html = ""
     for alert in alerts:
-        alerts_html += f'<div style="background:#5c2626; border-left:4px solid #f87171; padding:8px 15px; border-radius:5px; font-size:13px; color:#fca5a5; white-space: nowrap;">{alert}</div>'
+        alerts_html += f'<div style="background:#fef2f2; border-left:4px solid #ef4444; padding:8px 15px; border-radius:5px; font-size:13px; color:#dc2626; white-space: nowrap;">{alert}</div>'
 
     if not alerts_html:
-        alerts_html = '<div style="background:#1e4035; border-left:4px solid #4ade80; padding:8px 15px; border-radius:5px; color:#86efac; font-size:14px; font-weight: 500;">All systems normal</div>'
+        alerts_html = '<div style="background:#f0fdf4; border-left:4px solid #22c55e; padding:8px 15px; border-radius:5px; color:#16a34a; font-size:14px; font-weight: 500;">All systems normal</div>'
 
     # Use base64 image or fallback
     img_data, img_mime = ENGINE_IMAGE_DATA if ENGINE_IMAGE_DATA else (None, None)
     if img_data:
         img_src = f"data:{img_mime};base64,{img_data}"
     else:
-        img_src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='380' height='220'%3E%3Crect fill='%23243447' width='380' height='220' rx='10'/%3E%3Ctext x='190' y='110' fill='%23a8b8c8' text-anchor='middle' font-size='20'%3EMarine Diesel Engine%3C/text%3E%3C/svg%3E"
+        img_src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='380' height='220'%3E%3Crect fill='%23f3f4f6' width='380' height='220' rx='10'/%3E%3Ctext x='190' y='110' fill='%236b7280' text-anchor='middle' font-size='20'%3EMarine Diesel Engine%3C/text%3E%3C/svg%3E"
 
     return f'''
-    <div style="background: #243447; padding: 25px 30px; border-radius: 12px; border: 1px solid #3d5a73;">
+    <div style="padding: 25px 30px; border-radius: 12px;">
         <div style="display: flex; justify-content: center; align-items: center; gap: 30px;">
 
             <!-- Left Gauge - RPM -->
             <div style="display: flex; flex-direction: column; align-items: center; flex-shrink: 0;">
-                <div style="background: linear-gradient(135deg, #1e4d5c, #2d6b7a); border-radius: 50%; width: 130px; height: 130px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: bold; box-shadow: 0 6px 25px rgba(0,0,0,0.4); border: 4px solid #4a9eff;">
-                    <span style="font-size: 32px; color: #4ade80;">{rpm}</span>
-                    <span style="font-size: 14px; color: #a8b8c8;">RPM</span>
+                <div style="background: linear-gradient(135deg, #3b82f6, #6366f1); border-radius: 50%; width: 130px; height: 130px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: bold; box-shadow: 0 6px 25px rgba(0,0,0,0.2); border: 4px solid #3b82f6;">
+                    <span style="font-size: 32px; color: #22c55e;">{rpm}</span>
+                    <span style="font-size: 14px; color: white;">RPM</span>
                 </div>
             </div>
 
             <!-- Center - Engine Image -->
             <div style="flex: 1; display: flex; flex-direction: column; align-items: center; max-width: 700px;">
                 <img src="{img_src}"
-                     style="width: 100%; height: auto; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.5); border: 2px solid #3d5a73;"
+                     style="width: 100%; height: auto; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.2);"
                      alt="Marine Diesel Engine">
                 <!-- Alerts below image -->
                 <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;">
@@ -130,9 +133,9 @@ def get_engine_html():
 
             <!-- Right Gauge - Power -->
             <div style="display: flex; flex-direction: column; align-items: center; flex-shrink: 0;">
-                <div style="background: linear-gradient(135deg, #1e4d5c, #2d6b7a); border-radius: 50%; width: 130px; height: 130px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: bold; box-shadow: 0 6px 25px rgba(0,0,0,0.4); border: 4px solid #4a9eff;">
-                    <span style="font-size: 32px; color: #4ade80;">{power_mw:.1f}</span>
-                    <span style="font-size: 14px; color: #a8b8c8;">MW</span>
+                <div style="background: linear-gradient(135deg, #3b82f6, #6366f1); border-radius: 50%; width: 130px; height: 130px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: bold; box-shadow: 0 6px 25px rgba(0,0,0,0.2); border: 4px solid #3b82f6;">
+                    <span style="font-size: 32px; color: #22c55e;">{power_mw:.1f}</span>
+                    <span style="font-size: 14px; color: white;">MW</span>
                 </div>
             </div>
         </div>
@@ -140,40 +143,29 @@ def get_engine_html():
     '''
 
 
-def get_status_buttons_html():
-    """Generate status buttons for OIL, WATER, AIR, FUEL."""
+def get_data_button_labels(time_index: int = None):
+    """Return current values for data buttons."""
     if detector:
-        health = detector.get_feature_health()
-        oil_ok = health.get('Main_Prop_PS_ME1_Power', 'healthy') == 'healthy'
-        water_ok = health.get('Bus1_Load', 'healthy') == 'healthy'
-        air_ok = health.get('Speed', 'healthy') == 'healthy'
-        fuel_ok = health.get('Main_Prop_PS_Drive_Power', 'healthy') == 'healthy'
-    else:
-        oil_ok = water_ok = air_ok = fuel_ok = True
-
-    def btn_style(ok):
-        if ok:
-            bg = "linear-gradient(135deg, #059669, #10b981)"
-            border = "#34d399"
+        if time_index is not None:
+            status = detector.get_status_at_index(time_index)
         else:
-            bg = "linear-gradient(135deg, #dc2626, #ef4444)"
-            border = "#f87171"
-        return f"background: {bg}; color: white; font-weight: 600; padding: 14px 35px; border: 2px solid {border}; border-radius: 10px; font-size: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); cursor: pointer; transition: transform 0.2s;"
-
-    return f'''
-    <div style="display: flex; justify-content: center; gap: 15px; margin: 20px 0;">
-        <button style="{btn_style(oil_ok)}">🛢️ OIL</button>
-        <button style="{btn_style(water_ok)}">💧 WATER</button>
-        <button style="{btn_style(air_ok)}">💨 AIR</button>
-        <button style="{btn_style(fuel_ok)}">⛽ FUEL</button>
-    </div>
-    '''
+            status = detector.get_current_status()
+        return (
+            f"Bus1 Load\n{status.get('bus1_load', 0):.0f} kW",
+            f"Bus2 Load\n{status.get('bus2_load', 0):.0f} kW",
+            f"Speed\n{status.get('speed', 0):.1f} kts",
+            f"Position\n{status.get('latitude', 0):.2f}°N"
+        )
+    return ("Bus1 Load\n-- kW", "Bus2 Load\n-- kW", "Speed\n-- kts", "Position\n--°N")
 
 
-def get_variables_html():
+def get_variables_html(time_index: int = None):
     """Generate variable display boxes."""
     if detector:
-        status = detector.get_current_status()
+        if time_index is not None:
+            status = detector.get_status_at_index(time_index)
+        else:
+            status = detector.get_current_status()
         vars_data = [
             ("Bus1 Load", f"{status.get('bus1_load', 0):.0f} kW"),
             ("Bus2 Load", f"{status.get('bus2_load', 0):.0f} kW"),
@@ -192,23 +184,21 @@ def get_variables_html():
     for name, value in vars_data:
         boxes_html += f'''
         <div style="text-align: center; margin: 0 10px; flex: 1; min-width: 140px;">
-            <div style="background: #1a2332; border: 1px solid #3d5a73; border-radius: 12px; padding: 15px 20px; margin-bottom: 8px;">
-                <div style="font-weight: 600; font-size: 18px; color: #4ade80;">{value}</div>
+            <div style="border: 1px solid rgba(0,0,0,0.1); border-radius: 12px; padding: 15px 20px; margin-bottom: 8px;">
+                <div style="font-weight: 600; font-size: 18px; color: #22c55e;">{value}</div>
             </div>
-            <div style="font-size: 13px; color: #a8b8c8;">{name}</div>
+            <div style="font-size: 13px; opacity: 0.7;">{name}</div>
         </div>
         '''
 
     return f'<div style="display: flex; justify-content: center; margin-top: 20px; flex-wrap: wrap; gap: 10px;">{boxes_html}</div>'
 
 
-def get_realtime_page_html():
-    """Generate complete real-time page HTML."""
+def get_realtime_page_html(time_index: int = None):
+    """Generate complete real-time page HTML (engine display only, buttons are Gradio components)."""
     return f'''
-    <div style="background: #243447; padding: 25px; border-radius: 12px; border: 1px solid #3d5a73;">
-        {get_engine_html()}
-        {get_status_buttons_html()}
-        {get_variables_html()}
+    <div style="padding: 25px; border-radius: 12px;">
+        {get_engine_html(time_index)}
     </div>
     '''
 
@@ -320,6 +310,217 @@ def create_comparison_chart():
         return go.Figure()
 
 
+def apply_chart_styling(fig: go.Figure) -> go.Figure:
+    """Apply clean styling to a plotly figure that works in light and dark modes."""
+    fig.update_layout(
+        plot_bgcolor='rgba(0,0,0,0)',  # Transparent - inherits from container
+        paper_bgcolor='rgba(0,0,0,0)',  # Transparent
+        font=dict(color='#374151'),  # Neutral gray that works in both modes
+        xaxis=dict(
+            gridcolor='rgba(156, 163, 175, 0.3)',
+            linecolor='rgba(156, 163, 175, 0.5)',
+        ),
+        yaxis=dict(
+            gridcolor='rgba(156, 163, 175, 0.3)',
+            linecolor='rgba(156, 163, 175, 0.5)',
+        ),
+    )
+    return fig
+
+
+def create_variable_chart(variable: str = 'Bus1_Load', time_index: int = None):
+    """Create chart for a selected variable with anomaly markers.
+
+    Args:
+        variable: Variable name to chart
+        time_index: If provided, center chart around this index. Otherwise use latest data.
+    """
+    if detector is None or data_loader is None:
+        return go.Figure()
+
+    try:
+        if time_index is not None:
+            recon_data = detector.get_reconstruction_at_index(variable, time_index, hours=1)
+        else:
+            recon_data = detector.get_reconstruction_comparison(variable, hours=1)
+        if 'actual' not in recon_data:
+            return go.Figure()
+
+        actual = recon_data['actual']
+        reconstructed = recon_data['reconstructed']
+        errors = [abs(a - r) for a, r in zip(actual, reconstructed)]
+        x = list(range(len(actual)))
+
+        # Find anomalies (error > 95th percentile)
+        error_threshold = np.percentile(errors, 95)
+        anomaly_indices = [i for i, e in enumerate(errors) if e > error_threshold]
+        anomaly_values = [actual[i] for i in anomaly_indices]
+
+        fig = go.Figure()
+
+        # Actual values
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=actual,
+            mode='lines',
+            name='Actual',
+            line=dict(color='#4a9eff', width=2)
+        ))
+
+        # Reconstructed values
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=reconstructed,
+            mode='lines',
+            name='Reconstructed',
+            line=dict(color='#4ade80', width=2)
+        ))
+
+        # Anomaly markers
+        if anomaly_indices:
+            fig.add_trace(go.Scatter(
+                x=anomaly_indices,
+                y=anomaly_values,
+                mode='markers',
+                name='Anomaly',
+                marker=dict(color='#f87171', size=10, symbol='circle'),
+                hovertemplate='Anomaly<br>Time: %{x}<br>Value: %{y:.2f}<extra></extra>'
+            ))
+
+        fig.update_layout(
+            title=f'{variable} - Actual vs Reconstructed',
+            xaxis_title='Time Index',
+            yaxis_title='Value',
+            height=400,
+            margin=dict(l=60, r=30, t=50, b=50),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
+        )
+
+        return apply_chart_styling(fig)
+    except Exception:
+        return go.Figure()
+
+
+def create_total_error_chart(time_index: int = None):
+    """Create chart showing total reconstruction error over time.
+
+    Args:
+        time_index: If provided, center chart around this index. Otherwise use latest data.
+    """
+    if detector is None or data_loader is None:
+        return go.Figure()
+
+    try:
+        if time_index is not None:
+            recon_data = detector.get_all_features_reconstruction_at_index(time_index, hours=1)
+        else:
+            recon_data = detector.get_all_features_reconstruction(hours=1)
+        if 'total_error' not in recon_data:
+            return go.Figure()
+
+        total_error = recon_data['total_error']
+        x = list(range(len(total_error)))
+
+        # Calculate threshold (95th percentile)
+        threshold = np.percentile(total_error, 95)
+
+        fig = go.Figure()
+
+        # Total error line
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=total_error,
+            mode='lines',
+            name='Total Error',
+            line=dict(color='#4a9eff', width=2),
+            fill='tozeroy',
+            fillcolor='rgba(74, 158, 255, 0.2)'
+        ))
+
+        # Threshold line
+        fig.add_hline(
+            y=threshold,
+            line_dash='dash',
+            line_color='#fb923c',
+            annotation_text='95th Percentile Threshold',
+            annotation_position='top right',
+            annotation_font_color='#fb923c'
+        )
+
+        fig.update_layout(
+            title='Total Reconstruction Error (All Features)',
+            xaxis_title='Time Index',
+            yaxis_title='Total Error',
+            height=400,
+            margin=dict(l=60, r=30, t=50, b=50),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
+        )
+
+        return apply_chart_styling(fig)
+    except Exception:
+        return go.Figure()
+
+
+def create_threshold_heatmap():
+    """Create heatmap showing per-feature errors relative to threshold."""
+    if detector is None or data_loader is None:
+        return go.Figure()
+
+    try:
+        recon_data = detector.get_all_features_reconstruction(hours=1)
+        if 'errors_normalized' not in recon_data:
+            return go.Figure()
+
+        # Use normalized errors (same scale as threshold)
+        errors = recon_data['errors_normalized']  # (n_timesteps, 16)
+        feature_names = recon_data['feature_names']
+        threshold = detector.threshold
+
+        # Transpose for heatmap (features on y-axis, time on x-axis)
+        errors_transposed = errors.T  # (16, n_timesteps)
+
+        # Scale errors relative to threshold (0 = no error, 1 = at threshold, 2 = 200%)
+        errors_scaled = errors_transposed / threshold
+
+        # Custom colorscale: green up to 80%, then yellow to red up to 200%
+        # Values are scaled where 0.8 = 80% of threshold, 2.0 = 200% of threshold
+        colorscale = [
+            [0.0, '#22c55e'],    # 0% - bright green
+            [0.4, '#22c55e'],    # 80% (0.8/2.0) - still green (healthy)
+            [0.5, '#eab308'],    # 100% (1.0/2.0) - yellow (at threshold)
+            [0.75, '#f97316'],   # 150% - orange (warning)
+            [1.0, '#dc2626'],    # 200%+ - red (critical)
+        ]
+
+        fig = go.Figure()
+
+        fig.add_trace(go.Heatmap(
+            z=errors_scaled,
+            y=feature_names,
+            colorscale=colorscale,
+            zmin=0,
+            zmax=2.0,  # Cap at 200% of threshold
+            colorbar=dict(
+                title=dict(text='% of Threshold'),
+                tickvals=[0, 0.8, 1.0, 1.5, 2.0],
+                ticktext=['0%', '80%', '100%', '150%', '200%+']
+            ),
+            hovertemplate='Feature: %{y}<br>Time: %{x}<br>Error: %{z:.0%} of threshold<extra></extra>'
+        ))
+
+        fig.update_layout(
+            title=f'Feature Health Heatmap (threshold={threshold:.4f})',
+            xaxis_title='Time Index',
+            yaxis_title='Feature',
+            height=500,
+            margin=dict(l=150, r=30, t=50, b=50),
+        )
+
+        return apply_chart_styling(fig)
+    except Exception:
+        return go.Figure()
+
+
 def chat_respond(message, history):
     """Process chat message and return response."""
     if not message.strip():
@@ -342,30 +543,18 @@ def chat_respond(message, history):
 
 # CSS Styling - Works in both light and dark modes
 CUSTOM_CSS = """
-/* ========== BASE STYLES ========== */
-.gradio-container {
-    background: linear-gradient(135deg, #1e3a5f 0%, #2d5a7b 50%, #1e3a5f 100%) !important;
-    min-height: 100vh;
-}
-
-/* ========== DARK MODE VARIABLES ========== */
+/* ========== LIGHT MODE (default) ========== */
 :root {
-    --bg-primary: #1a2332;
-    --bg-secondary: #243447;
-    --bg-card: #2d4156;
-    --text-primary: #e8eef4;
-    --text-secondary: #a8b8c8;
-    --accent-blue: #4a9eff;
-    --accent-green: #4ade80;
-    --accent-orange: #fb923c;
-    --accent-red: #f87171;
-    --accent-purple: #a78bfa;
-    --border-color: #3d5a73;
+    --accent-blue: #3b82f6;
+    --accent-green: #22c55e;
+    --accent-orange: #f59e0b;
+    --accent-red: #ef4444;
+    --accent-purple: #8b5cf6;
 }
 
 /* ========== HOME PAGE ========== */
 .home-btn {
-    background: linear-gradient(135deg, var(--accent-purple) 0%, #8b5cf6 100%) !important;
+    background: linear-gradient(135deg, var(--accent-purple) 0%, #7c3aed 100%) !important;
     color: white !important;
     font-size: 20px !important;
     font-weight: 600 !important;
@@ -373,25 +562,19 @@ CUSTOM_CSS = """
     border-radius: 12px !important;
     border: none !important;
     min-width: 400px !important;
-    box-shadow: 0 4px 20px rgba(167, 139, 250, 0.3) !important;
+    box-shadow: 0 4px 20px rgba(139, 92, 246, 0.3) !important;
     transition: all 0.3s ease !important;
 }
 .home-btn:hover {
     transform: translateY(-3px) !important;
-    box-shadow: 0 6px 25px rgba(167, 139, 250, 0.4) !important;
+    box-shadow: 0 6px 25px rgba(139, 92, 246, 0.4) !important;
 }
 
 /* ========== NAVIGATION ========== */
 .back-btn {
-    background: var(--bg-card) !important;
-    color: var(--text-primary) !important;
     font-size: 24px !important;
     padding: 8px 16px !important;
     border-radius: 8px !important;
-    border: 1px solid var(--border-color) !important;
-}
-.back-btn:hover {
-    background: var(--bg-secondary) !important;
 }
 
 .interaction-btn {
@@ -402,124 +585,10 @@ CUSTOM_CSS = """
     border-radius: 8px !important;
 }
 
-/* ========== CARDS & PANELS ========== */
-.card-panel {
-    background: var(--bg-card) !important;
-    border-radius: 12px !important;
-    padding: 20px !important;
-    border: 1px solid var(--border-color) !important;
-}
-
 /* ========== CHAT STYLES ========== */
-.chat-sidebar {
-    background: var(--bg-secondary) !important;
-    border-radius: 12px !important;
-    padding: 15px !important;
-    border: 1px solid var(--border-color) !important;
-}
-
-/* Chatbot container */
-.chatbot {
-    background: var(--bg-card) !important;
-    border-radius: 12px !important;
-    border: 1px solid var(--border-color) !important;
-}
-
-/* Chat messages */
 .message {
     border-radius: 12px !important;
     padding: 12px 16px !important;
-}
-
-/* User message */
-.user-message, .message.user {
-    background: var(--accent-blue) !important;
-    color: white !important;
-}
-
-/* Bot message */
-.bot-message, .message.bot {
-    background: var(--bg-secondary) !important;
-    color: var(--text-primary) !important;
-}
-
-/* ========== BUTTONS ========== */
-.primary-btn, button.primary {
-    background: linear-gradient(135deg, var(--accent-blue) 0%, #3b82f6 100%) !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 8px !important;
-    font-weight: 500 !important;
-    transition: all 0.2s ease !important;
-}
-.primary-btn:hover, button.primary:hover {
-    transform: translateY(-1px) !important;
-    box-shadow: 0 4px 12px rgba(74, 158, 255, 0.3) !important;
-}
-
-.secondary-btn, button.secondary {
-    background: var(--bg-card) !important;
-    color: var(--text-primary) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: 8px !important;
-}
-.secondary-btn:hover, button.secondary:hover {
-    background: var(--bg-secondary) !important;
-}
-
-/* Quick question buttons */
-.quick-btn {
-    background: var(--bg-secondary) !important;
-    color: var(--text-secondary) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: 20px !important;
-    font-size: 13px !important;
-    padding: 8px 16px !important;
-    transition: all 0.2s ease !important;
-}
-.quick-btn:hover {
-    background: var(--accent-blue) !important;
-    color: white !important;
-    border-color: var(--accent-blue) !important;
-}
-
-/* ========== INPUTS ========== */
-input, textarea, .input-text {
-    background: var(--bg-primary) !important;
-    color: var(--text-primary) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: 8px !important;
-}
-input:focus, textarea:focus {
-    border-color: var(--accent-blue) !important;
-    outline: none !important;
-}
-
-/* ========== RADIO BUTTONS (Chat list) ========== */
-.radio-group label {
-    background: transparent !important;
-    color: var(--text-secondary) !important;
-    padding: 10px 12px !important;
-    border-radius: 8px !important;
-    margin: 4px 0 !important;
-    cursor: pointer !important;
-    transition: all 0.2s ease !important;
-}
-.radio-group label:hover {
-    background: var(--bg-card) !important;
-    color: var(--text-primary) !important;
-}
-.radio-group input:checked + label {
-    background: var(--accent-blue) !important;
-    color: white !important;
-}
-
-/* ========== CHARTS ========== */
-.plot-container {
-    background: var(--bg-card) !important;
-    border-radius: 12px !important;
-    padding: 15px !important;
-    border: 1px solid var(--border-color) !important;
 }
 
 /* ========== STATUS INDICATORS ========== */
@@ -527,83 +596,10 @@ input:focus, textarea:focus {
 .status-warning { color: var(--accent-orange) !important; }
 .status-critical { color: var(--accent-red) !important; }
 
-/* ========== HEADINGS ========== */
-h1, h2, h3, h4 {
-    color: var(--text-primary) !important;
-}
-
-/* ========== SCROLLBAR ========== */
-::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-::-webkit-scrollbar-track {
-    background: var(--bg-primary);
-}
-::-webkit-scrollbar-thumb {
-    background: var(--border-color);
-    border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-    background: var(--accent-blue);
-}
-
 /* ========== DYNAMIC HEIGHT CHAT ========== */
 .chat-fullpage {
     height: calc(100vh - 80px) !important;
-    display: flex !important;
-    flex-direction: column !important;
-}
-
-/* Target the chatbot inside ChatInterface */
-.chat-fullpage .chatbot {
-    height: calc(100vh - 350px) !important;
-    min-height: 300px !important;
-}
-
-/* ChatInterface with save_history sidebar */
-.chat-fullpage .chat-interface-row {
-    flex: 1 !important;
-    min-height: 0 !important;
-}
-
-/* Chat history sidebar styling */
-.chat-fullpage .sidebar,
-.chat-fullpage [class*="sidebar"] {
-    background: var(--bg-card) !important;
-    border-right: 1px solid var(--border-color) !important;
-}
-
-.chat-fullpage .sidebar button,
-.chat-fullpage [class*="sidebar"] button {
-    background: transparent !important;
-    color: var(--text-secondary) !important;
-    border: none !important;
-    text-align: left !important;
-    padding: 12px !important;
-    border-radius: 8px !important;
-    margin: 4px 8px !important;
-}
-
-.chat-fullpage .sidebar button:hover,
-.chat-fullpage [class*="sidebar"] button:hover {
-    background: var(--bg-secondary) !important;
-    color: var(--text-primary) !important;
-}
-
-.chat-fullpage .sidebar button.selected,
-.chat-fullpage [class*="sidebar"] button[aria-selected="true"] {
-    background: var(--accent-blue) !important;
-    color: white !important;
-}
-
-/* New chat button */
-.chat-fullpage button[class*="new-chat"],
-.chat-fullpage [class*="new"] {
-    background: var(--accent-blue) !important;
-    color: white !important;
-    border-radius: 8px !important;
-    margin: 8px !important;
+    /* Let Gradio handle flex layout for history sidebar */
 }
 
 /* ========== RESPONSIVE ========== */
@@ -612,9 +608,6 @@ h1, h2, h3, h4 {
         min-width: 280px !important;
         font-size: 18px !important;
         padding: 20px 30px !important;
-    }
-    .chat-fullpage .chatbot {
-        height: calc(100vh - 300px) !important;
     }
 }
 """
@@ -625,16 +618,22 @@ def create_app() -> gr.Blocks:
 
     with gr.Blocks(title="Vessel Monitoring System") as app:
 
+        # Global state for selected time index (shared across all pages)
+        if detector:
+            test_info = detector.get_test_data_info()
+            initial_index = test_info['end_index']
+        else:
+            initial_index = 0
+        selected_time_state = gr.State(value=initial_index)
+
         # ============== HOME PAGE ==============
         with gr.Column(visible=True) as home_page:
             gr.HTML('''
-                <div style="background: linear-gradient(135deg, #243447 0%, #2d4156 100%);
-                            padding: 60px 40px; border-radius: 16px; min-height: 480px;
-                            border: 1px solid #3d5a73;">
-                    <h1 style="text-align: center; color: #e8eef4; margin-bottom: 15px; font-size: 36px; font-weight: 600;">
+                <div style="padding: 60px 40px; border-radius: 16px; min-height: 480px;">
+                    <h1 style="text-align: center; margin-bottom: 15px; font-size: 36px; font-weight: 600;">
                         Vessel Monitoring System
                     </h1>
-                    <p style="text-align: center; color: #a8b8c8; margin-bottom: 50px; font-size: 16px;">
+                    <p style="text-align: center; opacity: 0.7; margin-bottom: 50px; font-size: 16px;">
                         AI-powered monitoring for offshore vessel operations
                     </p>
                     <div style="display: flex; flex-direction: column; align-items: center; gap: 20px;">
@@ -643,7 +642,7 @@ def create_app() -> gr.Blocks:
             btn_chats = gr.Button("AI CHAT ASSISTANT", elem_classes=["home-btn"])
             gr.HTML('''
                     </div>
-                    <p style="text-align: center; color: #6b7c8c; margin-top: 40px; font-size: 13px;">
+                    <p style="text-align: center; opacity: 0.5; margin-top: 40px; font-size: 13px;">
                         M/S Olympic Hera • Offshore Construction Vessel
                     </p>
                 </div>
@@ -653,29 +652,87 @@ def create_app() -> gr.Blocks:
         with gr.Column(visible=False) as realtime_page:
             with gr.Row():
                 back_btn_rt = gr.Button("Back", elem_classes=["back-btn"], scale=0, min_width=100)
-                gr.HTML('<div style="flex:1;"><h2 style="text-align:center; color:#e8eef4; margin:0;">Real Time Monitoring</h2></div>')
+                gr.HTML('<div style="flex:1;"><h2 style="text-align:center; margin:0;">Real Time Monitoring</h2></div>')
                 view_charts_btn = gr.Button("Charts", variant="secondary")
 
+            # Get test data range for slider
+            if detector:
+                test_info = detector.get_test_data_info()
+                slider_min = test_info['start_index']
+                slider_max = test_info['end_index']
+                slider_value = slider_max  # Start at latest
+                initial_time_str = test_info['end_time']
+            else:
+                slider_min, slider_max, slider_value = 0, 100, 100
+                initial_time_str = "No data"
+
             realtime_display = gr.HTML(value=get_realtime_page_html)
+
+            # Data buttons row (Gradio buttons with live values)
+            initial_labels = get_data_button_labels()
+            with gr.Row():
+                btn_bus1 = gr.Button(initial_labels[0])
+                btn_bus2 = gr.Button(initial_labels[1])
+                btn_speed = gr.Button(initial_labels[2])
+                btn_position = gr.Button(initial_labels[3])
+
+            # Time slider for navigating test data
+            gr.Markdown("**Navigate through test data:**")
+            with gr.Row():
+                time_slider = gr.Slider(
+                    minimum=slider_min,
+                    maximum=slider_max,
+                    value=slider_value,
+                    step=720,  # 1 hour steps (720 samples × 5 seconds)
+                    label="Timeline",
+                    elem_id="time-slider"
+                )
+                time_display = gr.Textbox(
+                    value=initial_time_str,
+                    label="Selected Time",
+                    interactive=False,
+                    scale=0,
+                    min_width=200
+                )
+
             refresh_rt = gr.Button("Refresh Data", variant="primary")
 
         # ============== CHARTS PAGE ==============
         with gr.Column(visible=False) as charts_page:
             with gr.Row():
                 back_btn_charts = gr.Button("Back", elem_classes=["back-btn"], scale=0, min_width=100)
-                gr.HTML('<div style="flex:1;"><h2 style="text-align:center; color:#e8eef4; margin:0;">Analytics & Charts</h2></div>')
+                gr.HTML('<div style="flex:1;"><h2 style="text-align:center; margin:0;">Analytics & Charts</h2></div>')
                 interaction_btn = gr.Button("Live View", elem_classes=["interaction-btn"])
 
-            gr.HTML('<div style="background: #243447; padding: 20px; border-radius: 12px; border: 1px solid #3d5a73;">')
-            anomaly_chart = gr.Plot(value=create_anomaly_chart, label="Time Series with Anomaly Detection")
-            comparison_chart = gr.Plot(value=create_comparison_chart, label="Actual vs Reconstructed (AI Prediction)")
-            gr.HTML('</div>')
+            with gr.Tabs():
+                with gr.TabItem("Variable Explorer"):
+                    variable_dropdown = gr.Dropdown(
+                        choices=MODEL_FEATURES,
+                        value='Bus1_Load',
+                        label="Select Variable",
+                        interactive=True
+                    )
+                    variable_chart = gr.Plot(value=lambda: create_variable_chart('Bus1_Load'))
+
+                with gr.TabItem("Total Error"):
+                    total_error_chart = gr.Plot(value=create_total_error_chart)
+
+            # Wire up dropdown change event (uses selected_time_state defined at app level)
+            def on_variable_change(variable, time_index):
+                """Update chart when variable changes, using current time index."""
+                return create_variable_chart(variable, time_index=time_index)
+
+            variable_dropdown.change(
+                fn=on_variable_change,
+                inputs=[variable_dropdown, selected_time_state],
+                outputs=[variable_chart]
+            )
 
         # ============== CHATS PAGE ==============
         with gr.Column(visible=False, elem_classes=["chat-fullpage"]) as chats_page:
             with gr.Row():
                 back_btn_chat = gr.Button("Back", elem_classes=["back-btn"], scale=0, min_width=100)
-                gr.HTML('<div style="flex:1;"><h2 style="text-align:center; color:#e8eef4; margin:0;">AI Assistant</h2></div>')
+                gr.HTML('<div style="flex:1;"><h2 style="text-align:center; margin:0;">AI Assistant</h2></div>')
                 gr.HTML('<div style="width:100px;"></div>')
 
             # Simple chat function for ChatInterface
@@ -690,21 +747,44 @@ def create_app() -> gr.Blocks:
                 except Exception as e:
                     return f"Error: {str(e)}"
 
-            # Use built-in ChatInterface (no custom chatbot to avoid save_history bug)
-            gr.ChatInterface(
-                fn=chat_fn,
-                title=None,
-                description="Ask me about vessel status, power systems, anomalies, and more.",
-                examples=[
-                    "What is the current vessel status?",
-                    "Show me the electrical system readings",
-                    "Are there any anomalies detected?",
-                    "What is the propulsion power output?",
-                    "Show the current speed and position",
-                ],
-                save_history=True,
-                fill_height=True,
-            )
+            # Quick prompt buttons
+            gr.Markdown("**Quick prompts:**", elem_classes=["quick-prompts-label"])
+            with gr.Row():
+                btn_status = gr.Button("Vessel status", size="sm", scale=1)
+                btn_electrical = gr.Button("Electrical readings", size="sm", scale=1)
+                btn_anomalies = gr.Button("Anomalies detected?", size="sm", scale=1)
+                btn_propulsion = gr.Button("Propulsion power", size="sm", scale=1)
+
+            # ChatInterface wrapped in container for JS targeting
+            with gr.Column(elem_id="vessel-chat"):
+                chat = gr.ChatInterface(
+                    fn=chat_fn,
+                    title=None,
+                    description="Ask me about vessel status, power systems, anomalies, and more.",
+                    save_history=True,
+                    fill_height=True,  # Re-enabled: bug fixed in Gradio 6.x (PR #10372)
+                )
+
+            # JS to click submit button after textbox is populated
+            submit_js = "() => document.querySelector('#vessel-chat button.primary')?.click()"
+
+            # Connect buttons to populate textbox and auto-submit
+            btn_status.click(
+                fn=lambda: "What is the current vessel status?",
+                outputs=chat.textbox
+            ).then(fn=None, js=submit_js)
+            btn_electrical.click(
+                fn=lambda: "Show me the electrical system readings",
+                outputs=chat.textbox
+            ).then(fn=None, js=submit_js)
+            btn_anomalies.click(
+                fn=lambda: "Are there any anomalies detected?",
+                outputs=chat.textbox
+            ).then(fn=None, js=submit_js)
+            btn_propulsion.click(
+                fn=lambda: "What is the propulsion power output?",
+                outputs=chat.textbox
+            ).then(fn=None, js=submit_js)
 
         # ============== NAVIGATION ==============
         all_pages = [home_page, realtime_page, charts_page, chats_page]
@@ -717,6 +797,19 @@ def create_app() -> gr.Blocks:
                 gr.update(visible=(page_name == "chats")),
             )
 
+        # Navigation functions for data buttons (now accept time_index from state)
+        def goto_chart_bus1(time_index):
+            return (*show_page("charts"), "Bus1_Load", create_variable_chart("Bus1_Load", time_index=time_index), create_total_error_chart(time_index=time_index))
+
+        def goto_chart_bus2(time_index):
+            return (*show_page("charts"), "Bus2_Load", create_variable_chart("Bus2_Load", time_index=time_index), create_total_error_chart(time_index=time_index))
+
+        def goto_chart_speed(time_index):
+            return (*show_page("charts"), "Speed", create_variable_chart("Speed", time_index=time_index), create_total_error_chart(time_index=time_index))
+
+        def goto_chart_position(time_index):
+            return (*show_page("charts"), "Latitude", create_variable_chart("Latitude", time_index=time_index), create_total_error_chart(time_index=time_index))
+
         btn_realtime.click(fn=lambda: show_page("realtime"), outputs=all_pages)
         btn_chats.click(fn=lambda: show_page("chats"), outputs=all_pages)
 
@@ -724,10 +817,85 @@ def create_app() -> gr.Blocks:
         back_btn_charts.click(fn=lambda: show_page("realtime"), outputs=all_pages)
         back_btn_chat.click(fn=lambda: show_page("home"), outputs=all_pages)
 
-        view_charts_btn.click(fn=lambda: show_page("charts"), outputs=all_pages)
+        def goto_charts_with_state(time_index):
+            """Navigate to charts with current time state."""
+            return (
+                *show_page("charts"),
+                create_variable_chart("Bus1_Load", time_index=time_index),
+                create_total_error_chart(time_index=time_index)
+            )
+
+        view_charts_btn.click(
+            fn=goto_charts_with_state,
+            inputs=[selected_time_state],
+            outputs=[*all_pages, variable_chart, total_error_chart]
+        )
         interaction_btn.click(fn=lambda: show_page("realtime"), outputs=all_pages)
 
-        refresh_rt.click(fn=get_realtime_page_html, outputs=realtime_display)
+        # Data button click handlers - navigate to charts with selected variable and time
+        btn_bus1.click(fn=goto_chart_bus1, inputs=[selected_time_state], outputs=[*all_pages, variable_dropdown, variable_chart, total_error_chart])
+        btn_bus2.click(fn=goto_chart_bus2, inputs=[selected_time_state], outputs=[*all_pages, variable_dropdown, variable_chart, total_error_chart])
+        btn_speed.click(fn=goto_chart_speed, inputs=[selected_time_state], outputs=[*all_pages, variable_dropdown, variable_chart, total_error_chart])
+        btn_position.click(fn=goto_chart_position, inputs=[selected_time_state], outputs=[*all_pages, variable_dropdown, variable_chart, total_error_chart])
+
+        # Time slider change handler
+        def on_time_slider_change(index):
+            """Update ALL displays when slider changes."""
+            index = int(index)
+
+            # Update tool executor with selected time (for chat tools)
+            if tool_executor:
+                tool_executor.set_selected_time(index)
+
+            # Get timestamp for display
+            if detector and detector.data_loader._df is not None:
+                timestamp = detector.data_loader._df.index[index]
+                time_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                time_str = "No data"
+
+            # Update all displays
+            html = get_realtime_page_html(time_index=index)
+            labels = get_data_button_labels(time_index=index)
+
+            # Return: state, realtime display, time string, buttons, chart
+            return (
+                index,  # Update state
+                html,
+                time_str,
+                *labels,
+            )
+
+        time_slider.change(
+            fn=on_time_slider_change,
+            inputs=[time_slider],
+            outputs=[selected_time_state, realtime_display, time_display, btn_bus1, btn_bus2, btn_speed, btn_position]
+        )
+
+        # Refresh button resets to latest data and updates slider
+        def refresh_realtime():
+            """Refresh to latest data and reset slider."""
+            if detector:
+                test_info = detector.get_test_data_info()
+                latest_index = test_info['end_index']
+
+                # Reset tool executor to latest time
+                if tool_executor:
+                    tool_executor.set_selected_time(latest_index)
+
+                return (
+                    latest_index,  # Update state
+                    get_realtime_page_html(time_index=latest_index),
+                    latest_index,  # Update slider
+                    test_info['end_time'],
+                    *get_data_button_labels(time_index=latest_index)
+                )
+            return initial_index, get_realtime_page_html(), slider_max, "No data", *get_data_button_labels()
+
+        refresh_rt.click(
+            fn=refresh_realtime,
+            outputs=[selected_time_state, realtime_display, time_slider, time_display, btn_bus1, btn_bus2, btn_speed, btn_position]
+        )
 
     return app
 
@@ -746,24 +914,12 @@ def main():
     initialize_system()
 
     app = create_app()
-    # Create dark theme
-    dark_theme = gr.themes.Base(
+
+    # Use Soft theme which supports both light and dark modes
+    theme = gr.themes.Soft(
         primary_hue="blue",
         secondary_hue="slate",
         neutral_hue="slate",
-    ).set(
-        body_background_fill="#1a2332",
-        body_background_fill_dark="#1a2332",
-        block_background_fill="#243447",
-        block_background_fill_dark="#243447",
-        block_border_color="#3d5a73",
-        block_border_color_dark="#3d5a73",
-        input_background_fill="#1a2332",
-        input_background_fill_dark="#1a2332",
-        button_primary_background_fill="#4a9eff",
-        button_primary_background_fill_dark="#4a9eff",
-        button_secondary_background_fill="#2d4156",
-        button_secondary_background_fill_dark="#2d4156",
     )
 
     app.launch(
@@ -771,7 +927,7 @@ def main():
         server_port=args.port,
         share=args.share,
         css=CUSTOM_CSS,
-        theme=dark_theme
+        theme=theme
     )
 
 
