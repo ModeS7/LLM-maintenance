@@ -222,6 +222,77 @@ class AnomalyDetector:
             'feature_errors': result.feature_errors
         }
 
+    def get_status_at_index(self, index: int) -> Dict:
+        """
+        Get vessel status at a specific data index.
+
+        Args:
+            index: Index into the dataset
+
+        Returns:
+            Dictionary with status information
+        """
+        # Get data window ending at this index
+        data = self.data_loader.get_data_at_index(index, n_samples=120)
+
+        if len(data.features) < 120:
+            # Not enough data, return current status
+            return self.get_current_status()
+
+        # Normalize and detect
+        features = self.data_loader.normalize(data.features)
+        result = self.detect(features, timestamp=data.timestamp[-1])
+
+        # Get raw values from the target index
+        raw_df = data.raw_df.iloc[-1]
+
+        # Compute power metrics (same as get_current_status)
+        total_power = float(raw_df.get('Bus1_Load', 0) + raw_df.get('Bus2_Load', 0))
+        maneuver_power = sum(
+            float(raw_df.get(col, 0))
+            for col in VARIABLE_GROUPS['maneuver']
+            if col in raw_df.index
+        )
+        propulsion_power = sum(
+            float(raw_df.get(col, 0))
+            for col in VARIABLE_GROUPS['propulsion']
+            if col in raw_df.index
+        )
+
+        return {
+            'timestamp': str(data.timestamp[-1]),
+            'anomaly_score': result.anomaly_score,
+            'is_anomaly': result.is_anomaly,
+            'severity': result.severity,
+            'speed': float(raw_df.get('Speed', 0)),
+            'latitude': float(raw_df.get('Latitude', 0)),
+            'longitude': float(raw_df.get('Longitude', 0)),
+            'total_power': total_power,
+            'maneuver_power': maneuver_power,
+            'propulsion_power': propulsion_power,
+            'bus1_load': float(raw_df.get('Bus1_Load', 0)),
+            'bus2_load': float(raw_df.get('Bus2_Load', 0)),
+            'top_contributors': result.top_contributors,
+            'feature_errors': result.feature_errors
+        }
+
+    def get_test_data_info(self) -> Dict:
+        """Get info about test data range for slider."""
+        test_start, test_end = self.data_loader.get_test_data_range()
+
+        # Get timestamps at start and end
+        df = self.data_loader._df
+        start_time = df.index[test_start]
+        end_time = df.index[test_end]
+
+        return {
+            'start_index': test_start,
+            'end_index': test_end,
+            'start_time': str(start_time),
+            'end_time': str(end_time),
+            'total_samples': test_end - test_start + 1
+        }
+
     def get_variable_readings(self, group: str) -> Dict:
         """
         Get current readings for a variable group.
@@ -242,13 +313,47 @@ class AnomalyDetector:
             if var in raw_df.index:
                 readings[var] = float(raw_df[var])
 
-        # Compute group total if applicable
+        # Compute group total if applicable (only sum actual loads, not available capacity)
         if group in ['electrical', 'maneuver', 'propulsion']:
-            readings['total'] = sum(readings.values())
+            # Only sum variables that represent actual power usage (exclude 'Avail' capacity)
+            total = sum(v for k, v in readings.items() if 'Avail' not in k)
+            readings['total'] = total
 
         return {
             'group': group,
             'timestamp': str(latest_data.timestamp[-1]),
+            'readings': readings
+        }
+
+    def get_variable_readings_at_index(self, group: str, index: int) -> Dict:
+        """
+        Get readings for a variable group at a specific index.
+
+        Args:
+            group: One of 'electrical', 'maneuver', 'propulsion', 'ship', 'coordinates'
+            index: Index into the dataset
+
+        Returns:
+            Dictionary with variable readings at that index
+        """
+        data = self.data_loader.get_data_at_index(index, n_samples=1)
+        raw_df = data.raw_df.iloc[-1]
+
+        variables = VARIABLE_GROUPS.get(group, [])
+        readings = {}
+
+        for var in variables:
+            if var in raw_df.index:
+                readings[var] = float(raw_df[var])
+
+        # Compute group total if applicable (only sum actual loads, not available capacity)
+        if group in ['electrical', 'maneuver', 'propulsion']:
+            total = sum(v for k, v in readings.items() if 'Avail' not in k)
+            readings['total'] = total
+
+        return {
+            'group': group,
+            'timestamp': str(data.timestamp[-1]),
             'readings': readings
         }
 
@@ -263,8 +368,8 @@ class AnomalyDetector:
         latest_data = self.data_loader.get_latest(n_samples=120)
         features = self.data_loader.normalize(latest_data.features)
 
-        # Detect anomaly
-        result = self.detect(features)
+        # Detect anomaly (pass actual data timestamp)
+        result = self.detect(features, timestamp=latest_data.timestamp[-1])
 
         # Determine health per feature
         health = {}
@@ -282,7 +387,7 @@ class AnomalyDetector:
 
     def get_anomaly_history(self, hours: int = 24) -> List[Dict]:
         """
-        Get recent anomaly detections.
+        Get recent anomaly detections by scanning through data.
 
         Args:
             hours: Number of hours to look back
@@ -290,20 +395,37 @@ class AnomalyDetector:
         Returns:
             List of anomaly events
         """
-        cutoff = datetime.now() - timedelta(hours=hours)
+        # Scan through recent data to find actual anomalies
+        n_samples = int(hours * 3600 / 5)  # 5-second sampling
+        data = self.data_loader.get_latest(n_samples=max(n_samples, 120))
 
-        recent_anomalies = [
-            {
-                'timestamp': str(r.timestamp),
-                'anomaly_score': r.anomaly_score,
-                'severity': r.severity,
-                'top_contributors': r.top_contributors
-            }
-            for r in self._anomaly_history
-            if r.timestamp >= cutoff
-        ]
+        # Normalize
+        features = self.data_loader.normalize(data.features)
 
-        return recent_anomalies
+        # Process in windows to find anomalies
+        window_size = 120
+        n_total = len(features)
+        stride = window_size  # Non-overlapping for history scan
+
+        anomalies = []
+
+        for start_idx in range(0, n_total - window_size + 1, stride):
+            end_idx = start_idx + window_size
+            window = features[start_idx:end_idx]
+            timestamp = data.timestamp[end_idx - 1]  # Use end of window timestamp
+
+            # Detect anomaly
+            result = self.detect(window, timestamp)
+
+            if result.is_anomaly:
+                anomalies.append({
+                    'timestamp': str(result.timestamp),
+                    'anomaly_score': result.anomaly_score,
+                    'severity': result.severity,
+                    'top_contributors': result.top_contributors
+                })
+
+        return anomalies
 
     def analyze_anomaly(self, timestamp_str: str) -> Dict:
         """
@@ -388,30 +510,58 @@ class AnomalyDetector:
 
         return " ".join(analysis)
 
-    def get_reconstruction_comparison(
+    def get_reconstruction_at_index(
         self,
         variable: str,
+        index: int,
         hours: float = 1.0
     ) -> Dict:
         """
-        Get actual vs reconstructed values for a variable.
+        Get reconstruction comparison centered around a specific index.
 
         Args:
             variable: Variable name
-            hours: Hours of data to retrieve
+            index: Center index in the dataset
+            hours: Hours of data to retrieve (total window size)
 
         Returns:
-            Dictionary with time series data
+            Dictionary with time series data centered around index
         """
         # Get variable index first
         if variable not in MODEL_FEATURES:
             return {'error': f'Variable {variable} not found'}
         var_idx = MODEL_FEATURES.index(variable)
 
-        # Get recent data
         n_samples = int(hours * 3600 / 5)  # 5-second sampling
-        data = self.data_loader.get_latest(n_samples=max(n_samples, 120))
 
+        # Get data window centered around the index
+        half_window = n_samples // 2
+        start_idx = max(0, index - half_window)
+        end_idx = min(len(self.data_loader._df), index + half_window)
+        actual_samples = end_idx - start_idx
+
+        # Get data at this range
+        data = self.data_loader.get_data_at_index(end_idx, n_samples=actual_samples)
+
+        if len(data.features) < 120:
+            # Not enough data, fall back to latest
+            return self.get_reconstruction_comparison(variable, hours)
+
+        # Use the common reconstruction logic
+        return self._compute_reconstruction(data, var_idx, variable)
+
+    def _compute_reconstruction(self, data, var_idx: int, variable: str) -> Dict:
+        """
+        Common reconstruction computation logic.
+
+        Args:
+            data: DataWindow with features and timestamps
+            var_idx: Index of the variable in MODEL_FEATURES
+            variable: Variable name for the result
+
+        Returns:
+            Dictionary with reconstruction data
+        """
         # Normalize
         features = self.data_loader.normalize(data.features)
 
@@ -462,3 +612,159 @@ class AnomalyDetector:
             'reconstructed': all_reconstructed,
             'error': error
         }
+
+    def get_reconstruction_comparison(
+        self,
+        variable: str,
+        hours: float = 1.0
+    ) -> Dict:
+        """
+        Get actual vs reconstructed values for a variable.
+
+        Args:
+            variable: Variable name
+            hours: Hours of data to retrieve
+
+        Returns:
+            Dictionary with time series data
+        """
+        # Get variable index first
+        if variable not in MODEL_FEATURES:
+            return {'error': f'Variable {variable} not found'}
+        var_idx = MODEL_FEATURES.index(variable)
+
+        # Get recent data
+        n_samples = int(hours * 3600 / 5)  # 5-second sampling
+        data = self.data_loader.get_latest(n_samples=max(n_samples, 120))
+
+        return self._compute_reconstruction(data, var_idx, variable)
+
+    def get_all_features_reconstruction_at_index(self, index: int, hours: float = 1.0) -> Dict:
+        """
+        Get reconstruction data for all features centered around a specific index.
+
+        Args:
+            index: Center index in the dataset
+            hours: Hours of data to retrieve (total window size)
+
+        Returns:
+            Same as get_all_features_reconstruction but centered around index
+        """
+        n_samples = int(hours * 3600 / 5)  # 5-second sampling
+
+        # Get data window centered around the index
+        half_window = n_samples // 2
+        start_idx = max(0, index - half_window)
+        end_idx = min(len(self.data_loader._df), index + half_window)
+        actual_samples = end_idx - start_idx
+
+        # Get data at this range
+        data = self.data_loader.get_data_at_index(end_idx, n_samples=actual_samples)
+
+        if len(data.features) < 120:
+            # Not enough data, fall back to latest
+            return self.get_all_features_reconstruction(hours)
+
+        return self._compute_all_features_reconstruction(data)
+
+    def _compute_all_features_reconstruction(self, data) -> Dict:
+        """
+        Common reconstruction computation for all features.
+
+        Args:
+            data: DataWindow with features and timestamps
+
+        Returns:
+            Dictionary with reconstruction data for all features
+        """
+        # Normalize
+        features = self.data_loader.normalize(data.features)
+
+        # Model expects windows of 120 samples (max_seq_len)
+        window_size = 120
+        n_total = len(features)
+
+        # Process in sliding windows and stitch together
+        all_actual = []
+        all_reconstructed = []
+        all_actual_norm = []
+        all_reconstructed_norm = []
+        all_timestamps = []
+
+        stride = window_size // 2  # 50% overlap
+
+        for start_idx in range(0, n_total - window_size + 1, stride):
+            end_idx = start_idx + window_size
+            window = features[start_idx:end_idx]
+
+            # Get reconstruction for this window
+            x = torch.FloatTensor(window[np.newaxis, ...]).to(self.device)
+            with torch.no_grad():
+                reconstruction = self.model(x).cpu().numpy()[0]
+
+            # Denormalize for display
+            actual_window = self.data_loader.denormalize(window)
+            reconstructed_window = self.data_loader.denormalize(reconstruction)
+
+            # For first window, take all values
+            # For subsequent windows, only take the second half to avoid overlap
+            if start_idx == 0:
+                all_actual.append(actual_window)
+                all_reconstructed.append(reconstructed_window)
+                all_actual_norm.append(window)
+                all_reconstructed_norm.append(reconstruction)
+                all_timestamps.extend([str(t) for t in data.timestamp[start_idx:end_idx]])
+            else:
+                # Only add the new (non-overlapping) portion
+                half = window_size // 2
+                all_actual.append(actual_window[half:])
+                all_reconstructed.append(reconstructed_window[half:])
+                all_actual_norm.append(window[half:])
+                all_reconstructed_norm.append(reconstruction[half:])
+                all_timestamps.extend([str(t) for t in data.timestamp[start_idx + half:end_idx]])
+
+        # Stack arrays
+        actual_array = np.vstack(all_actual)
+        reconstructed_array = np.vstack(all_reconstructed)
+        actual_norm_array = np.vstack(all_actual_norm)
+        reconstructed_norm_array = np.vstack(all_reconstructed_norm)
+
+        # Calculate per-feature errors (absolute difference)
+        errors_array = np.abs(actual_array - reconstructed_array)
+        errors_norm_array = np.abs(actual_norm_array - reconstructed_norm_array)
+
+        # Calculate total error per timestep (sum across features)
+        total_error = errors_array.sum(axis=1).tolist()
+
+        return {
+            'timestamps': all_timestamps,
+            'actual': actual_array,
+            'reconstructed': reconstructed_array,
+            'errors': errors_array,
+            'errors_normalized': errors_norm_array,
+            'total_error': total_error,
+            'feature_names': MODEL_FEATURES
+        }
+
+    def get_all_features_reconstruction(self, hours: float = 1.0) -> Dict:
+        """
+        Get reconstruction data for all features.
+
+        Args:
+            hours: Hours of data to retrieve
+
+        Returns:
+            Dictionary with:
+            - timestamps: list of timestamp strings
+            - actual: np.array (n_timesteps, 16) - denormalized
+            - reconstructed: np.array (n_timesteps, 16) - denormalized
+            - errors: np.array (n_timesteps, 16) - denormalized per-feature errors
+            - errors_normalized: np.array (n_timesteps, 16) - normalized errors (for threshold comparison)
+            - total_error: list - sum of denormalized errors across features per timestep
+            - feature_names: list of feature names
+        """
+        # Get recent data
+        n_samples = int(hours * 3600 / 5)  # 5-second sampling
+        data = self.data_loader.get_latest(n_samples=max(n_samples, 120))
+
+        return self._compute_all_features_reconstruction(data)

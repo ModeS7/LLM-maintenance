@@ -344,21 +344,42 @@ class MockVesselMaintenanceAgent:
                 result = self.tool_executor.execute('get_vessel_status', {})
                 response = f"**Current Vessel Status**\n\n{format_tool_result(result)}"
 
-            elif any(word in message_lower for word in ['anomal', 'issue', 'problem']):
+            elif any(word in message_lower for word in ['anomal', 'issue', 'problem', 'alert', 'warning']):
                 result = self.tool_executor.execute('get_anomaly_history', {'hours': 24})
                 response = f"**Anomaly Report**\n\n{format_tool_result(result)}"
 
-            elif 'electrical' in message_lower:
+            elif 'electrical' in message_lower or 'bus' in message_lower:
                 result = self.tool_executor.execute('get_variable_readings', {'group': 'electrical'})
                 response = f"**Electrical System**\n\n{format_tool_result(result)}"
 
-            elif any(word in message_lower for word in ['maneuver', 'thruster']):
+            elif any(word in message_lower for word in ['maneuver', 'thruster', 'bow', 'stern']):
                 result = self.tool_executor.execute('get_variable_readings', {'group': 'maneuver'})
                 response = f"**Maneuvering Systems**\n\n{format_tool_result(result)}"
 
             elif 'propulsion' in message_lower or 'engine' in message_lower:
                 result = self.tool_executor.execute('get_variable_readings', {'group': 'propulsion'})
                 response = f"**Propulsion System**\n\n{format_tool_result(result)}"
+
+            elif any(word in message_lower for word in ['speed', 'position', 'location', 'where', 'coordinate', 'draft', 'fast', 'velocity', 'heading']):
+                # Get both ship variables and coordinates for navigation queries
+                status = self.tool_executor.execute('get_vessel_status', {})
+                ship_result = self.tool_executor.execute('get_variable_readings', {'group': 'ship'})
+                coord_result = self.tool_executor.execute('get_variable_readings', {'group': 'coordinates'})
+
+                lat = status.get('latitude', 0)
+                lon = status.get('longitude', 0)
+                lat_dir = 'N' if lat >= 0 else 'S'
+                lon_dir = 'E' if lon >= 0 else 'W'
+
+                response = (f"**Navigation & Position**\n\n"
+                           f"Speed: {status.get('speed', 0):.1f} knots\n"
+                           f"Position: {abs(lat):.4f}°{lat_dir}, {abs(lon):.4f}°{lon_dir}\n")
+
+                # Add draft info if available
+                ship_readings = ship_result.get('readings', {})
+                if 'Draft_Aft' in ship_readings or 'Draft_Fwd' in ship_readings:
+                    response += f"\nDraft (Aft): {ship_readings.get('Draft_Aft', 0):.1f} m\n"
+                    response += f"Draft (Fwd): {ship_readings.get('Draft_Fwd', 0):.1f} m"
 
             elif 'power' in message_lower:
                 status = self.tool_executor.execute('get_vessel_status', {})
@@ -369,9 +390,44 @@ class MockVesselMaintenanceAgent:
                            f"Maneuver Power: {status.get('maneuver_power', 0):.0f} kW\n"
                            f"Propulsion Power: {status.get('propulsion_power', 0):.0f} kW")
 
+            elif any(word in message_lower for word in ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']):
+                response = ("Hello! I'm your vessel monitoring assistant. I can help you with:\n\n"
+                           "- **Vessel status**: Current operational overview\n"
+                           "- **Electrical readings**: Bus loads and available power\n"
+                           "- **Propulsion**: Main engine power output\n"
+                           "- **Maneuvering**: Thruster power usage\n"
+                           "- **Navigation**: Speed, position, and draft\n"
+                           "- **Anomalies**: Recent alerts and warnings\n\n"
+                           "What would you like to know?")
+
+            elif any(word in message_lower for word in ['help', 'what can you', 'capabilities']):
+                response = ("I can help you monitor the vessel's systems:\n\n"
+                           "**Available Commands:**\n"
+                           "- \"What is the vessel status?\" - Overall health and key metrics\n"
+                           "- \"Show electrical readings\" - Bus loads and available capacity\n"
+                           "- \"What is the propulsion power?\" - Main engine output\n"
+                           "- \"Show thruster status\" - Maneuvering system power\n"
+                           "- \"What is our speed and position?\" - Navigation data\n"
+                           "- \"Any anomalies detected?\" - Recent alerts\n"
+                           "- \"How much power is being used?\" - Power distribution\n")
+
             else:
-                result = self.tool_executor.execute('get_vessel_status', {})
-                response = f"Here's the current vessel status:\n\n{format_tool_result(result)}"
+                # Check if the query seems vessel-related but doesn't match specific patterns
+                vessel_keywords = ['vessel', 'ship', 'boat', 'load', 'system', 'reading', 'data', 'show', 'tell', 'monitor']
+                if any(word in message_lower for word in vessel_keywords):
+                    result = self.tool_executor.execute('get_vessel_status', {})
+                    response = f"Here's the current vessel status:\n\n{format_tool_result(result)}"
+                else:
+                    # For unrelated queries, politely redirect
+                    response = ("I'm a vessel monitoring assistant. I can help you with:\n\n"
+                               "- **Vessel status** - \"What is the vessel status?\"\n"
+                               "- **Power systems** - \"How much power is being used?\"\n"
+                               "- **Electrical** - \"Show electrical readings\"\n"
+                               "- **Propulsion** - \"What is the propulsion power?\"\n"
+                               "- **Thrusters** - \"Show thruster status\"\n"
+                               "- **Navigation** - \"What is our speed and position?\"\n"
+                               "- **Anomalies** - \"Are there any anomalies?\"\n\n"
+                               "What would you like to know about the vessel?")
         else:
             response = "Tool executor not configured. Please check the system setup."
 

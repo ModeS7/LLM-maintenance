@@ -108,6 +108,7 @@ class ToolExecutor:
             detector: AnomalyDetector instance
         """
         self.detector = detector
+        self.selected_time_index = None  # Track selected time from UI slider
 
         # Map tool names to methods
         self._tools: Dict[str, Callable] = {
@@ -117,6 +118,10 @@ class ToolExecutor:
             "get_variable_chart_data": self._get_variable_chart_data,
             "analyze_anomaly": self._analyze_anomaly,
         }
+
+    def set_selected_time(self, index: int):
+        """Set the selected time index for tools to use."""
+        self.selected_time_index = index
 
     def execute(self, tool_name: str, arguments: Dict[str, Any]) -> Dict:
         """
@@ -138,11 +143,15 @@ class ToolExecutor:
             return {"error": f"Tool execution failed: {str(e)}"}
 
     def _get_vessel_status(self) -> Dict:
-        """Get current vessel status."""
+        """Get vessel status at selected time or current."""
+        if self.selected_time_index is not None:
+            return self.detector.get_status_at_index(self.selected_time_index)
         return self.detector.get_current_status()
 
     def _get_variable_readings(self, group: str) -> Dict:
-        """Get readings for a variable group."""
+        """Get readings for a variable group at selected time or current."""
+        if self.selected_time_index is not None:
+            return self.detector.get_variable_readings_at_index(group, self.selected_time_index)
         return self.detector.get_variable_readings(group)
 
     def _get_anomaly_history(self, hours: int = 24) -> Dict:
@@ -155,7 +164,9 @@ class ToolExecutor:
         }
 
     def _get_variable_chart_data(self, variable: str, hours: float = 1.0) -> Dict:
-        """Get chart data for a variable."""
+        """Get chart data for a variable at selected time or current."""
+        if self.selected_time_index is not None:
+            return self.detector.get_reconstruction_at_index(variable, self.selected_time_index, hours)
         return self.detector.get_reconstruction_comparison(variable, hours)
 
     def _analyze_anomaly(self, timestamp: str) -> Dict:
@@ -178,6 +189,24 @@ def format_tool_result(result: Dict) -> str:
 
     lines = []
 
+    # Helper to get appropriate unit for a variable
+    def get_unit(var_name: str) -> str:
+        if 'Power' in var_name or 'Load' in var_name:
+            return 'kW'
+        elif 'Speed' in var_name:
+            return 'knots'
+        elif 'Draft' in var_name:
+            return 'm'
+        elif 'Latitude' in var_name or 'Longitude' in var_name:
+            return '°'
+        return ''
+
+    # Helper to format coordinates properly
+    def format_position(lat: float, lon: float) -> str:
+        lat_dir = 'N' if lat >= 0 else 'S'
+        lon_dir = 'E' if lon >= 0 else 'W'
+        return f"{abs(lat):.4f}°{lat_dir}, {abs(lon):.4f}°{lon_dir}"
+
     # Handle different result types
     if "anomaly_score" in result:
         # Vessel status
@@ -186,7 +215,9 @@ def format_tool_result(result: Dict) -> str:
         lines.append(f"Anomaly Score: {result.get('anomaly_score', 0):.4f}")
         lines.append(f"Speed: {result.get('speed', 0):.1f} knots")
         lines.append(f"Total Power: {result.get('total_power', 0):.0f} kW")
-        lines.append(f"Position: {result.get('latitude', 0):.4f}°N, {result.get('longitude', 0):.4f}°W")
+        lat = result.get('latitude', 0)
+        lon = result.get('longitude', 0)
+        lines.append(f"Position: {format_position(lat, lon)}")
 
         if result.get('top_contributors'):
             lines.append("\nTop Contributing Variables:")
@@ -195,13 +226,22 @@ def format_tool_result(result: Dict) -> str:
 
     elif "readings" in result:
         # Variable readings
-        lines.append(f"Group: {result.get('group', 'unknown').title()}")
+        group = result.get('group', 'unknown')
+        lines.append(f"Group: {group.title()}")
         lines.append(f"Timestamp: {result.get('timestamp', 'N/A')}")
         lines.append("\nReadings:")
         for var, value in result['readings'].items():
             if var != 'total':
-                unit = 'kW' if 'Power' in var or 'Load' in var else ''
-                lines.append(f"  - {var}: {value:.2f} {unit}")
+                unit = get_unit(var)
+                # Format coordinates specially
+                if 'Latitude' in var:
+                    dir_char = 'N' if value >= 0 else 'S'
+                    lines.append(f"  - {var}: {abs(value):.4f}°{dir_char}")
+                elif 'Longitude' in var:
+                    dir_char = 'E' if value >= 0 else 'W'
+                    lines.append(f"  - {var}: {abs(value):.4f}°{dir_char}")
+                else:
+                    lines.append(f"  - {var}: {value:.2f} {unit}".rstrip())
         if 'total' in result['readings']:
             lines.append(f"\nTotal: {result['readings']['total']:.2f} kW")
 

@@ -121,13 +121,16 @@ def train_epoch(
     train_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     criterion: nn.Module,
-    device: torch.device
+    device: torch.device,
+    epoch: int,
+    total_epochs: int
 ) -> float:
     """Train for one epoch."""
     model.train()
     total_loss = 0.0
 
-    for batch in train_loader:
+    pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{total_epochs} [Train]", leave=False)
+    for batch in pbar:
         x = batch[0].to(device)
 
         optimizer.zero_grad()
@@ -144,6 +147,7 @@ def train_epoch(
         optimizer.step()
 
         total_loss += loss.item()
+        pbar.set_postfix(loss=f"{loss.item():.6f}")
 
     return total_loss / len(train_loader)
 
@@ -152,7 +156,8 @@ def validate(
     model: TransformerAutoencoder,
     val_loader: DataLoader,
     criterion: nn.Module,
-    device: torch.device
+    device: torch.device,
+    desc: str = "Validation"
 ) -> Tuple[float, np.ndarray]:
     """Validate the model."""
     model.eval()
@@ -160,7 +165,8 @@ def validate(
     all_errors = []
 
     with torch.no_grad():
-        for batch in val_loader:
+        pbar = tqdm(val_loader, desc=f"[{desc}]", leave=False)
+        for batch in pbar:
             x = batch[0].to(device)
 
             # Forward pass
@@ -169,6 +175,7 @@ def validate(
             # Compute loss
             loss = criterion(reconstruction, x)
             total_loss += loss.item()
+            pbar.set_postfix(loss=f"{loss.item():.6f}")
 
             # Collect reconstruction errors for threshold computation
             errors = model.compute_anomaly_score(x)
@@ -243,19 +250,20 @@ def train(
     print("Starting training...")
     best_val_loss = float('inf')
     best_epoch = 0
+    total_epochs = train_config['epochs']
 
-    for epoch in range(train_config['epochs']):
+    for epoch in range(total_epochs):
         # Train
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, epoch, total_epochs)
 
         # Validate
-        val_loss, val_errors = validate(model, val_loader, criterion, device)
+        val_loss, val_errors = validate(model, val_loader, criterion, device, desc="Val")
 
         # Update scheduler
         scheduler.step(val_loss)
 
-        print(f"Epoch {epoch+1}/{train_config['epochs']}: "
-              f"Train Loss = {train_loss:.6f}, Val Loss = {val_loss:.6f}")
+        # Build epoch summary line
+        epoch_summary = f"Epoch {epoch+1}/{total_epochs}: Train Loss = {train_loss:.6f}, Val Loss = {val_loss:.6f}"
 
         # Save best model
         if val_loss < best_val_loss:
@@ -276,13 +284,16 @@ def train(
                 'config': model_config
             }
             torch.save(checkpoint, model_save_path)
-            print(f"  -> Best model saved (threshold = {threshold:.6f})")
+            epoch_summary += f" [BEST - threshold={threshold:.6f}]"
+
+        print(epoch_summary)
+        print()  # Blank line between epochs
 
     print(f"\nTraining complete. Best epoch: {best_epoch + 1}, Best val loss: {best_val_loss:.6f}")
 
     # Evaluate on test set
     print("\nEvaluating on test set...")
-    test_loss, test_errors = validate(model, test_loader, criterion, device)
+    test_loss, test_errors = validate(model, test_loader, criterion, device, desc="Test")
     print(f"Test Loss: {test_loss:.6f}")
 
     # Compute test set metrics
