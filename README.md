@@ -1,92 +1,166 @@
-# Offshore Vessel Monitoring System
+# Offshore Vessel Monitoring System with LLM Interface
 
-An AI-powered monitoring system for offshore vessel power data with anomaly detection and natural language querying.
+A proof-of-concept showing how conversational AI makes vessel monitoring accessible. Uses power data from M/S Olympic Hera, a Transformer Autoencoder for anomaly detection, and a local LLM (Ollama) for natural language interaction.
 
-## Features
+## Key Idea
 
-- **Transformer Autoencoder** for anomaly detection using reconstruction error
-- **Real-Time Dashboard** showing vessel variables by category
-- **LLM Chat Interface** with tool calling for natural language queries
-- **Charts Page** for detailed variable analysis and anomaly visualization
+**LLM interprets, model detects.** The LLM never makes up numbers - it calls tools to get real anomaly detection from the Transformer model, then explains them in plain language.
 
-## Data
+## Architecture
 
-The system uses power monitoring data from M/S Olympic Hera (Offshore Construction Vessel):
-- ~1.58M rows covering 91 days of operation
-- 5-second sampling rate
-- 16 monitored variables across electrical, maneuver, propulsion, and navigation systems
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Gradio UI (app.py)                          │
+│   Real-Time Dashboard │ Charts │ Chat + Quick Prompts           │
+│   Chat History (browser local storage)                          │
+└──────────────────────────────┬──────────────────────────────────┘
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                 VesselAgent (llm_agent.py)                      │
+│   Local LLM (Ollama) - decides which tools to call              │
+└──────────────────────────────┬──────────────────────────────────┘
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      Tools (tools.py)                           │
+│   get_vessel_status │ get_variable_readings │ get_anomaly_history│
+│   get_variable_chart_data │ analyze_anomaly                     │
+└──────────────────────────────┬──────────────────────────────────┘
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   AnomalyDetector (inference.py)                │
+│   Transformer Autoencoder (models/autoencoder.pt) → Anomalies   │
+└──────────────────────────────┬──────────────────────────────────┘
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                 VesselDataLoader (data_loader.py)               │
+│   M/S Olympic Hera dataset (~1.58M rows, 91 days)               │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-## Installation
+## How the LLM Gets Data
 
+The LLM **never sees raw data**. It uses tool-calling:
+
+```
+User: "What is the vessel status?"
+  → LLM decides to call get_vessel_status()
+  → Tool returns JSON: {status: "Normal", anomaly_score: 0.12, ...}
+  → LLM interprets: "The vessel is operating normally with low anomaly score..."
+```
+
+**Why tool-calling?**
+- Raw data → hallucinations
+- Fine-tuning → outdated when data changes
+- Tool-calling → real-time data, LLM interprets
+
+## Tutorial: Getting Everything Working
+
+### Prerequisites
+
+- Python 3.10+
+- 5-6GB disk space (for Ollama model)
+
+### Step 1: Clone and Setup
+
+**Linux / macOS / WSL:**
 ```bash
-# Create virtual environment (recommended)
+git clone <repository-url>
+cd LLM-maintenance
+
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# or: venv\Scripts\activate  # Windows
-
-# Install dependencies
+source venv/bin/activate
 pip install -r requirements.txt
+```
 
-# For LLM features, install Ollama: https://ollama.ai
-# Then pull a model:
+**Windows (PowerShell):**
+```powershell
+git clone <repository-url>
+cd LLM-maintenance
+
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+**Windows (Command Prompt):**
+```cmd
+git clone <repository-url>
+cd LLM-maintenance
+
+python -m venv venv
+venv\Scripts\activate.bat
+pip install -r requirements.txt
+```
+
+### Step 2: Install Ollama (Local LLM)
+
+| Platform | Installation |
+|----------|--------------|
+| **Windows** | Download installer from https://ollama.ai/download |
+| **macOS** | `brew install ollama` or download from https://ollama.ai/download |
+| **Linux/WSL** | `curl -fsSL https://ollama.ai/install.sh \| sh` |
+
+After installation, pull the model (same command on all platforms):
+```
 ollama pull qwen3:8b
 ```
 
-## Usage
+**Verify:** `ollama list` should show `qwen3:8b`.
 
-### 1. Train the Model
+> **Note (Windows):** Ollama runs automatically after installation. If you see "connection refused" errors, open the Ollama app from the Start menu.
+
+### Step 3: Train the Model
 
 ```bash
 python -m src.train
 ```
 
-This will:
-- Load and preprocess the vessel data
-- Train the Transformer Autoencoder
-- Save the model to `models/autoencoder.pt`
-- Save the scaler to `models/scaler.pkl`
+This trains the Transformer Autoencoder and saves to `models/autoencoder.pt`.
 
-Training options:
+**Options:**
 ```bash
 python -m src.train --epochs 50 --batch-size 32 --lr 1e-4
 ```
 
-### 2. Run the Application
+### Step 4: Run the Demo
 
-```bash
+```
 python -m src.app
 ```
 
-Then open http://localhost:7860 in your browser.
+**Open:** http://localhost:7860
 
-Options:
+**Options:**
 ```bash
 python -m src.app --host 0.0.0.0 --port 8080 --share
 ```
 
-## Project Structure
+### Step 5: Try It Out
 
-```
-├── data/
-│   └── Data_Pwr_All_S5.txt      # Vessel power data
-├── models/
-│   ├── autoencoder.pt           # Trained model
-│   └── scaler.pkl               # Feature scaler
-├── src/
-│   ├── __init__.py
-│   ├── app.py                   # Gradio UI
-│   ├── data_loader.py           # Data loading & preprocessing
-│   ├── model.py                 # Transformer Autoencoder
-│   ├── train.py                 # Training script
-│   ├── inference.py             # Anomaly detection
-│   ├── llm_agent.py             # LLM with tool calling
-│   ├── tools.py                 # Tool definitions
-│   └── visualization.py         # Chart utilities
-├── requirements.txt
-└── README.md
-```
+1. **Real-Time Dashboard** - View live vessel data by category
+2. **Click quick prompt buttons** - "Vessel status", "Electrical readings", etc.
+3. **Ask custom questions** - "Are there any anomalies?" or "Show propulsion power"
+4. **Charts page** - Select variables for detailed analysis
+5. **Chat history** - Previous conversations saved in left sidebar
 
-## Variable Groups
+### Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| `ModuleNotFoundError` | Run `pip install -r requirements.txt` |
+| `Ollama connection refused` | Run `ollama serve` in another terminal |
+| `Model not found` | Run `ollama pull qwen3:8b` |
+| Chat history not showing | Refresh page, history is in browser local storage |
+
+## Dataset
+
+**M/S Olympic Hera** - Offshore Construction Vessel power monitoring data.
+
+- ~1.58M rows covering 91 days of operation
+- 5-second sampling rate
+- 16 monitored variables
+
+### Variable Groups
 
 | Group | Variables |
 |-------|-----------|
@@ -98,19 +172,45 @@ python -m src.app --host 0.0.0.0 --port 8080 --share
 
 ## Model Architecture
 
-The Transformer Autoencoder uses:
-- Input dimension: 16 features
-- Embedding dimension: 64
-- Attention heads: 4
-- Encoder/Decoder layers: 2 each
-- Window size: 120 timesteps
-- Anomaly detection via reconstruction error
+**Transformer Autoencoder** - Detects anomalies via reconstruction error.
+
+| Parameter | Value |
+|-----------|-------|
+| Input dimension | 16 features |
+| Embedding dimension | 64 |
+| Attention heads | 4 |
+| Encoder layers | 2 |
+| Decoder layers | 2 |
+| Window size | 120 timesteps |
 
 ## LLM Tools
 
-The chat interface supports these tools:
-- `get_vessel_status`: Current operational status
-- `get_variable_readings`: Readings for a variable group
-- `get_anomaly_history`: Recent anomaly events
-- `get_variable_chart_data`: Time series data for plotting
-- `analyze_anomaly`: Detailed anomaly analysis
+| Tool | Description |
+|------|-------------|
+| `get_vessel_status` | Current operational status and anomaly score |
+| `get_variable_readings` | Readings for a variable group |
+| `get_anomaly_history` | Recent anomaly events |
+| `get_variable_chart_data` | Time series data for plotting |
+| `analyze_anomaly` | Detailed anomaly analysis |
+
+## Project Structure
+
+```
+src/
+├── app.py           # Gradio UI
+├── llm_agent.py     # Ollama LLM with tool calling
+├── tools.py         # 5 tools LLM can call
+├── inference.py     # Transformer model loading & anomaly detection
+├── model.py         # Transformer Autoencoder architecture
+├── train.py         # Training script
+├── data_loader.py   # Vessel data parsing
+└── visualization.py # Chart utilities
+```
+
+## Anomaly Severity
+
+| Level | Threshold | Action |
+|-------|-----------|--------|
+| Critical | > 0.8 | Immediate investigation |
+| Warning | 0.5 - 0.8 | Schedule inspection |
+| Normal | < 0.5 | Normal operation |
