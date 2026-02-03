@@ -195,6 +195,34 @@ class VesselDataLoader:
             raw_df=df_slice
         )
 
+    def get_data_at_index(self, index: int, n_samples: int = 120) -> VesselData:
+        """Get n samples ending at a specific index."""
+        if self._df is None:
+            self.load_data()
+
+        # Ensure bounds
+        end_idx = min(index + 1, len(self._df))
+        start_idx = max(0, end_idx - n_samples)
+
+        df_slice = self._df.iloc[start_idx:end_idx]
+
+        return VesselData(
+            timestamp=df_slice.index,
+            features=df_slice[MODEL_FEATURES].values,
+            feature_names=MODEL_FEATURES,
+            raw_df=df_slice
+        )
+
+    def get_test_data_range(self) -> Tuple[int, int]:
+        """Get the index range for test data (last 15%)."""
+        if self._df is None:
+            self.load_data()
+
+        n_samples = len(self._df)
+        test_start = int(n_samples * 0.85)  # Test data starts at 85%
+        test_end = n_samples - 1
+        return test_start, test_end
+
     def get_train_val_test_split(
         self,
         train_ratio: float = 0.7,
