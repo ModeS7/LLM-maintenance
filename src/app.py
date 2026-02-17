@@ -18,6 +18,7 @@ BASE_DIR = Path(__file__).parent.parent
 DATA_PATH = BASE_DIR / "data" / "Data_Pwr_All_S5.txt"
 MODEL_PATH = BASE_DIR / "models" / "autoencoder.pt"
 SCALER_PATH = BASE_DIR / "models" / "scaler.pkl"
+CBM_RESULTS_PATH = BASE_DIR / "outputs" / "cbm_evaluation" / "results.joblib"
 
 # Global instances
 data_loader: Optional[VesselDataLoader] = None
@@ -613,6 +614,138 @@ CUSTOM_CSS = """
 """
 
 
+# ---------------------------------------------------------------------------
+# CBM Evaluation helpers
+# ---------------------------------------------------------------------------
+_cbm_cache = {}  # holds pre-computed results once loaded
+
+
+def _load_cbm_precomputed():
+    """Load pre-computed CBM results (cached after first call)."""
+    if 'data' not in _cbm_cache:
+        import joblib as _jl
+        if CBM_RESULTS_PATH.exists():
+            _cbm_cache['data'] = _jl.load(CBM_RESULTS_PATH)
+        else:
+            _cbm_cache['data'] = None
+    return _cbm_cache['data']
+
+
+def _cbm_live_compute(fault_type):
+    """Run CBM evaluation on-demand for a single fault (needs GPU)."""
+    import joblib as _jl
+    from .cbm import (joblib_dict_to_array, compute_reconstruction_errors,
+                      calibrate_threshold, sliding_window_average,
+                      run_cbm_evaluation, FAILURE_CONFIGS)
+    from .model import load_model
+
+    model, _ = load_model(str(MODEL_PATH))
+    scaler = _jl.load(str(SCALER_PATH))
+    device = next(model.parameters()).device
+    data_path = BASE_DIR / "next_step" / "variable_of_interest_for_PCC.joblib"
+    data_dict = _jl.load(str(data_path))
+    healthy_arr = joblib_dict_to_array(data_dict)
+    healthy_err = compute_reconstruction_errors(healthy_arr, model, scaler,
+                                                device=device)
+    smoothed_h = sliding_window_average(healthy_err, 50)
+    threshold = calibrate_threshold(smoothed_h, 1.20)
+    result = run_cbm_evaluation(data_dict, fault_type, model, scaler,
+                                healthy_errors=healthy_err, threshold=threshold,
+                                device=device, scale_factor=10)
+    return {
+        'raw_errors': result.raw_errors,
+        'smoothed_errors': result.smoothed_errors,
+        'anomaly_flags': result.anomaly_flags,
+        'injection_point': result.injection_point,
+        'first_detection': result.first_detection,
+        'detection_delay': result.detection_delay,
+        'prognostic': None,
+    }, threshold
+
+
+def build_cbm_error_chart(fault_type, use_precomputed=True):
+    """Build an interactive Plotly reconstruction-error chart for *fault_type*."""
+    if use_precomputed:
+        saved = _load_cbm_precomputed()
+        if saved is None:
+            fig = go.Figure()
+            fig.add_annotation(text="No pre-computed results found. Run: python run_cbm_evaluation.py",
+                               xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
+                               font=dict(size=16))
+            return fig, "Run `python run_cbm_evaluation.py` first."
+        r = saved['results'][fault_type]
+        threshold = saved['threshold']
+    else:
+        r, threshold = _cbm_live_compute(fault_type)
+
+    raw = r['raw_errors']
+    smoothed = r['smoothed_errors']
+    flags = r['anomaly_flags']
+    inj = r['injection_point']
+    first_det = r['first_detection']
+    delay = r['detection_delay']
+    x = np.arange(len(raw))
+
+    fig = go.Figure()
+
+    # Raw errors (faint)
+    fig.add_trace(go.Scatter(x=x, y=raw, mode='lines', name='Raw error',
+                             line=dict(color='rgba(100,160,255,0.25)', width=1)))
+
+    # Smoothed errors
+    fig.add_trace(go.Scatter(x=x, y=smoothed, mode='lines',
+                             name='Smoothed error (w=50)',
+                             line=dict(color='#3b82f6', width=2)))
+
+    # Threshold
+    fig.add_hline(y=threshold, line_dash='dash', line_color='#ef4444',
+                  annotation_text=f'Threshold ({threshold:.4f})',
+                  annotation_position='top left',
+                  annotation_font_color='#ef4444')
+
+    # Injection point
+    fig.add_vline(x=inj, line_dash='dash', line_color='#22c55e',
+                  annotation_text=f'Injection ({inj})',
+                  annotation_position='top right',
+                  annotation_font_color='#22c55e')
+
+    # Anomaly shading
+    if np.any(flags):
+        diff = np.diff(flags.astype(int))
+        starts = (np.where(diff == 1)[0] + 1).tolist()
+        ends = (np.where(diff == -1)[0] + 1).tolist()
+        if flags[0]:
+            starts = [0] + starts
+        if flags[-1]:
+            ends = ends + [len(flags)]
+        for s, e in zip(starts, ends):
+            fig.add_vrect(x0=s, x1=e, fillcolor='rgba(239,68,68,0.12)',
+                          line_width=0)
+
+    # First detection
+    if first_det is not None:
+        fig.add_vline(x=first_det, line_dash='dot', line_color='#f59e0b',
+                      annotation_text=f'Detection (+{delay})',
+                      annotation_position='top left',
+                      annotation_font_color='#f59e0b')
+
+    title = fault_type.replace('_', ' ').title()
+    fig.update_layout(
+        title=f'Reconstruction Error — {title}',
+        xaxis_title='Sample', yaxis_title='MSE',
+        height=500, hovermode='x unified',
+        margin=dict(l=60, r=30, t=60, b=50),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02,
+                    xanchor='center', x=0.5))
+
+    # Summary text
+    det_str = f"sample {first_det} (delay: {delay})" if first_det else "NOT DETECTED"
+    n_anom = int(np.sum(flags))
+    summary = (f"**{title}** | Injection: sample {inj} | "
+               f"First detection: {det_str} | Anomalous windows: {n_anom}")
+    return fig, summary
+
+
 def create_app() -> gr.Blocks:
     """Create the Gradio application."""
 
@@ -640,6 +773,7 @@ def create_app() -> gr.Blocks:
             ''')
             btn_realtime = gr.Button("REAL TIME MONITORING", elem_classes=["home-btn"])
             btn_chats = gr.Button("AI CHAT ASSISTANT", elem_classes=["home-btn"])
+            btn_cbm = gr.Button("CBM EVALUATION", elem_classes=["home-btn"])
             gr.HTML('''
                     </div>
                     <p style="text-align: center; opacity: 0.5; margin-top: 40px; font-size: 13px;">
@@ -786,8 +920,47 @@ def create_app() -> gr.Blocks:
                 outputs=chat.textbox
             ).then(fn=None, js=submit_js)
 
+        # ============== CBM EVALUATION PAGE ==============
+        with gr.Column(visible=False) as cbm_page:
+            with gr.Row():
+                back_btn_cbm = gr.Button("Back", elem_classes=["back-btn"],
+                                         scale=0, min_width=100)
+                gr.HTML('<div style="flex:1;"><h2 style="text-align:center; margin:0;">'
+                        'CBM Failure Injection Evaluation</h2></div>')
+
+            with gr.Row():
+                cbm_fault_selector = gr.Radio(
+                    choices=["slow_drift", "load_imbalance",
+                             "temporary_reduction", "spikes"],
+                    value="slow_drift",
+                    label="Fault Scenario",
+                )
+                cbm_mode = gr.Radio(
+                    choices=["Pre-computed", "Live compute"],
+                    value="Pre-computed",
+                    label="Mode",
+                )
+                cbm_run_btn = gr.Button("Run / Refresh", variant="primary")
+
+            cbm_summary = gr.Markdown("Select a fault and click **Run / Refresh**.")
+            cbm_chart = gr.Plot()
+
+            def _on_cbm_run(fault, mode):
+                use_pre = (mode == "Pre-computed")
+                fig, summary = build_cbm_error_chart(fault, use_precomputed=use_pre)
+                return apply_chart_styling(fig), summary
+
+            cbm_run_btn.click(fn=_on_cbm_run,
+                              inputs=[cbm_fault_selector, cbm_mode],
+                              outputs=[cbm_chart, cbm_summary])
+            # Also update on fault selector change (instant when pre-computed)
+            cbm_fault_selector.change(
+                fn=lambda f, m: _on_cbm_run(f, m),
+                inputs=[cbm_fault_selector, cbm_mode],
+                outputs=[cbm_chart, cbm_summary])
+
         # ============== NAVIGATION ==============
-        all_pages = [home_page, realtime_page, charts_page, chats_page]
+        all_pages = [home_page, realtime_page, charts_page, chats_page, cbm_page]
 
         def show_page(page_name):
             return (
@@ -795,6 +968,7 @@ def create_app() -> gr.Blocks:
                 gr.update(visible=(page_name == "realtime")),
                 gr.update(visible=(page_name == "charts")),
                 gr.update(visible=(page_name == "chats")),
+                gr.update(visible=(page_name == "cbm")),
             )
 
         # Navigation functions for data buttons (now accept time_index from state)
@@ -812,10 +986,12 @@ def create_app() -> gr.Blocks:
 
         btn_realtime.click(fn=lambda: show_page("realtime"), outputs=all_pages)
         btn_chats.click(fn=lambda: show_page("chats"), outputs=all_pages)
+        btn_cbm.click(fn=lambda: show_page("cbm"), outputs=all_pages)
 
         back_btn_rt.click(fn=lambda: show_page("home"), outputs=all_pages)
         back_btn_charts.click(fn=lambda: show_page("realtime"), outputs=all_pages)
         back_btn_chat.click(fn=lambda: show_page("home"), outputs=all_pages)
+        back_btn_cbm.click(fn=lambda: show_page("home"), outputs=all_pages)
 
         def goto_charts_with_state(time_index):
             """Navigate to charts with current time state."""
