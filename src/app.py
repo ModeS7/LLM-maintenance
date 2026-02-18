@@ -6,6 +6,7 @@ import numpy as np
 from pathlib import Path
 from typing import Optional, Any
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from .data_loader import VesselDataLoader, MODEL_FEATURES
 from .inference import AnomalyDetector
@@ -617,26 +618,51 @@ CUSTOM_CSS = """
 # ---------------------------------------------------------------------------
 # CBM Evaluation helpers
 # ---------------------------------------------------------------------------
-_cbm_cache = {}  # holds pre-computed results once loaded
+_cbm_cache: dict = {}          # 'precomputed' -> saved dict
+_cbm_live_cache: dict = {}     # fault_type -> result dict (from live runs)
 
 
 def _load_cbm_precomputed():
     """Load pre-computed CBM results (cached after first call)."""
-    if 'data' not in _cbm_cache:
+    if 'precomputed' not in _cbm_cache:
         import joblib as _jl
         if CBM_RESULTS_PATH.exists():
-            _cbm_cache['data'] = _jl.load(CBM_RESULTS_PATH)
+            _cbm_cache['precomputed'] = _jl.load(CBM_RESULTS_PATH)
         else:
-            _cbm_cache['data'] = None
-    return _cbm_cache['data']
+            _cbm_cache['precomputed'] = None
+    return _cbm_cache['precomputed']
 
 
-def _cbm_live_compute(fault_type):
-    """Run CBM evaluation on-demand for a single fault (needs GPU)."""
+def _get_fault_data(fault_type):
+    """Return the result dict for *fault_type* (precomputed or live-cached)."""
+    if fault_type in _cbm_live_cache:
+        return _cbm_live_cache[fault_type]
+    saved = _load_cbm_precomputed()
+    if saved and fault_type in saved['results']:
+        return saved['results'][fault_type]
+    return None
+
+
+def _get_healthy_errors():
+    """Return healthy raw errors array from precomputed data."""
+    saved = _load_cbm_precomputed()
+    return saved['healthy_errors'] if saved else None
+
+
+def _no_data_fig(msg="No data"):
+    fig = go.Figure()
+    fig.add_annotation(text=msg, xref="paper", yref="paper",
+                       x=0.5, y=0.5, showarrow=False, font=dict(size=16))
+    fig.update_layout(height=400)
+    return fig
+
+
+def cbm_live_compute(fault_type, scale_factor, injection_point=None):
+    """Full GPU re-computation for one fault. Result is cached."""
     import joblib as _jl
     from .cbm import (joblib_dict_to_array, compute_reconstruction_errors,
-                      calibrate_threshold, sliding_window_average,
-                      run_cbm_evaluation, FAILURE_CONFIGS)
+                      run_cbm_evaluation, sliding_window_average,
+                      calibrate_threshold)
     from .model import load_model
 
     model, _ = load_model(str(MODEL_PATH))
@@ -644,66 +670,65 @@ def _cbm_live_compute(fault_type):
     device = next(model.parameters()).device
     data_path = BASE_DIR / "next_step" / "variable_of_interest_for_PCC.joblib"
     data_dict = _jl.load(str(data_path))
+
     healthy_arr = joblib_dict_to_array(data_dict)
     healthy_err = compute_reconstruction_errors(healthy_arr, model, scaler,
                                                 device=device)
+    # Store healthy errors for slider-based reprocessing
+    _cbm_cache.setdefault('precomputed', {})['healthy_errors'] = healthy_err
+
     smoothed_h = sliding_window_average(healthy_err, 50)
     threshold = calibrate_threshold(smoothed_h, 1.20)
-    result = run_cbm_evaluation(data_dict, fault_type, model, scaler,
-                                healthy_errors=healthy_err, threshold=threshold,
-                                device=device, scale_factor=10)
-    return {
-        'raw_errors': result.raw_errors,
-        'smoothed_errors': result.smoothed_errors,
-        'anomaly_flags': result.anomaly_flags,
-        'injection_point': result.injection_point,
-        'first_detection': result.first_detection,
-        'detection_delay': result.detection_delay,
-        'prognostic': None,
-    }, threshold
+
+    r = run_cbm_evaluation(data_dict, fault_type, model, scaler,
+                           healthy_errors=healthy_err, threshold=threshold,
+                           device=device, scale_factor=scale_factor,
+                           injection_point=injection_point)
+    result_dict = dict(
+        raw_errors=r.raw_errors, smoothed_errors=r.smoothed_errors,
+        anomaly_flags=r.anomaly_flags, injection_point=r.injection_point,
+        first_detection=r.first_detection, detection_delay=r.detection_delay,
+        original_data=r.original_data, modified_data=r.modified_data,
+        prognostic=None,
+    )
+    _cbm_live_cache[fault_type] = result_dict
+    return result_dict
 
 
-def build_cbm_error_chart(fault_type, use_precomputed=True):
-    """Build an interactive Plotly reconstruction-error chart for *fault_type*."""
-    if use_precomputed:
-        saved = _load_cbm_precomputed()
-        if saved is None:
-            fig = go.Figure()
-            fig.add_annotation(text="No pre-computed results found. Run: python run_cbm_evaluation.py",
-                               xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
-                               font=dict(size=16))
-            return fig, "Run `python run_cbm_evaluation.py` first."
-        r = saved['results'][fault_type]
-        threshold = saved['threshold']
-    else:
-        r, threshold = _cbm_live_compute(fault_type)
+# ---- chart builders -------------------------------------------------------
 
-    raw = r['raw_errors']
-    smoothed = r['smoothed_errors']
-    flags = r['anomaly_flags']
-    inj = r['injection_point']
-    first_det = r['first_detection']
-    delay = r['detection_delay']
+def _build_error_chart(fault_type, smoothing_window, safety_factor):
+    """Reconstruction-error chart, reprocessed from raw errors."""
+    from .cbm import sliding_window_average, FAILURE_CONFIGS
+
+    data = _get_fault_data(fault_type)
+    healthy = _get_healthy_errors()
+    if data is None or healthy is None:
+        return _no_data_fig("Run `python run_cbm_evaluation.py` first."), ""
+
+    raw = data['raw_errors']
+    smoothed = sliding_window_average(raw, smoothing_window)
+    healthy_sm = sliding_window_average(healthy, smoothing_window)
+    threshold = float(np.max(healthy_sm) * safety_factor)
+    flags = smoothed > threshold
+
+    inj = data['injection_point']
+    anomaly_idx = np.where(flags)[0]
+    post = anomaly_idx[anomaly_idx >= inj] if len(anomaly_idx) else np.array([])
+    first_det = int(post[0]) if len(post) else None
+    delay = (first_det - inj) if first_det is not None else None
+
     x = np.arange(len(raw))
-
     fig = go.Figure()
-
-    # Raw errors (faint)
     fig.add_trace(go.Scatter(x=x, y=raw, mode='lines', name='Raw error',
                              line=dict(color='rgba(100,160,255,0.25)', width=1)))
-
-    # Smoothed errors
     fig.add_trace(go.Scatter(x=x, y=smoothed, mode='lines',
-                             name='Smoothed error (w=50)',
+                             name=f'Smoothed (w={smoothing_window})',
                              line=dict(color='#3b82f6', width=2)))
-
-    # Threshold
     fig.add_hline(y=threshold, line_dash='dash', line_color='#ef4444',
                   annotation_text=f'Threshold ({threshold:.4f})',
                   annotation_position='top left',
                   annotation_font_color='#ef4444')
-
-    # Injection point
     fig.add_vline(x=inj, line_dash='dash', line_color='#22c55e',
                   annotation_text=f'Injection ({inj})',
                   annotation_position='top right',
@@ -722,7 +747,6 @@ def build_cbm_error_chart(fault_type, use_precomputed=True):
             fig.add_vrect(x0=s, x1=e, fillcolor='rgba(239,68,68,0.12)',
                           line_width=0)
 
-    # First detection
     if first_det is not None:
         fig.add_vline(x=first_det, line_dash='dot', line_color='#f59e0b',
                       annotation_text=f'Detection (+{delay})',
@@ -730,20 +754,133 @@ def build_cbm_error_chart(fault_type, use_precomputed=True):
                       annotation_font_color='#f59e0b')
 
     title = fault_type.replace('_', ' ').title()
-    fig.update_layout(
-        title=f'Reconstruction Error — {title}',
-        xaxis_title='Sample', yaxis_title='MSE',
-        height=500, hovermode='x unified',
-        margin=dict(l=60, r=30, t=60, b=50),
-        legend=dict(orientation='h', yanchor='bottom', y=1.02,
-                    xanchor='center', x=0.5))
+    fig.update_layout(title=f'Reconstruction Error \u2014 {title}',
+                      xaxis_title='Sample', yaxis_title='MSE',
+                      height=500, hovermode='x unified',
+                      margin=dict(l=60, r=30, t=60, b=50),
+                      legend=dict(orientation='h', yanchor='bottom', y=1.02,
+                                  xanchor='center', x=0.5))
 
-    # Summary text
     det_str = f"sample {first_det} (delay: {delay})" if first_det else "NOT DETECTED"
     n_anom = int(np.sum(flags))
-    summary = (f"**{title}** | Injection: sample {inj} | "
-               f"First detection: {det_str} | Anomalous windows: {n_anom}")
-    return fig, summary
+    summary = (f"**{title}**  |  Injection: sample {inj}  |  "
+               f"First detection: {det_str}  |  "
+               f"Anomalous windows: {n_anom}  |  "
+               f"Threshold: {threshold:.4f}")
+    return apply_chart_styling(fig), summary
+
+
+def _build_data_comparison(fault_type):
+    """4-subplot chart: original vs modified bus loads."""
+    data = _get_fault_data(fault_type)
+    if data is None:
+        return _no_data_fig()
+
+    bus = ['Bus1_Load', 'Bus1_Avail_Load', 'Bus2_Load', 'Bus2_Avail_Load']
+    bus_idx = [MODEL_FEATURES.index(f) for f in bus]
+    inj = data['injection_point']
+    orig = data['original_data']
+    mod = data['modified_data']
+    x = np.arange(len(orig))
+
+    fig = make_subplots(rows=2, cols=2, subplot_titles=bus,
+                        horizontal_spacing=0.08, vertical_spacing=0.12)
+    for i, (feat, ci) in enumerate(zip(bus, bus_idx)):
+        r, c = i // 2 + 1, i % 2 + 1
+        fig.add_trace(go.Scatter(x=x, y=orig[:, ci], mode='lines',
+                                 name='Original', legendgroup='orig',
+                                 showlegend=(i == 0),
+                                 line=dict(color='#3b82f6', width=1)),
+                      row=r, col=c)
+        fig.add_trace(go.Scatter(x=x, y=mod[:, ci], mode='lines',
+                                 name='Modified', legendgroup='mod',
+                                 showlegend=(i == 0),
+                                 line=dict(color='#ef4444', width=1)),
+                      row=r, col=c)
+        fig.add_vline(x=inj, line_dash='dash', line_color='#22c55e',
+                      line_width=1, row=r, col=c)
+
+    title = fault_type.replace('_', ' ').title()
+    fig.update_layout(title=f'Data Comparison \u2014 {title}',
+                      height=600, hovermode='x unified',
+                      margin=dict(l=60, r=30, t=80, b=50),
+                      legend=dict(orientation='h', yanchor='bottom', y=1.04,
+                                  xanchor='center', x=0.5))
+    return apply_chart_styling(fig)
+
+
+def _build_prognostic(fault_type, smoothing_window, safety_factor):
+    """Linear-regression prognostic chart (slow_drift / load_imbalance)."""
+    from .cbm import sliding_window_average, estimate_time_to_failure
+
+    if fault_type not in ('slow_drift', 'load_imbalance'):
+        fig = _no_data_fig("Prognostic available for Slow Drift and Load Imbalance only.")
+        return fig, ""
+
+    data = _get_fault_data(fault_type)
+    healthy = _get_healthy_errors()
+    if data is None or healthy is None:
+        return _no_data_fig(), ""
+
+    raw = data['raw_errors']
+    smoothed = sliding_window_average(raw, smoothing_window)
+    healthy_sm = sliding_window_average(healthy, smoothing_window)
+    threshold = float(np.max(healthy_sm) * safety_factor)
+    inj = data['injection_point']
+
+    prog = estimate_time_to_failure(smoothed, threshold, lookback=2000)
+
+    x = np.arange(len(smoothed))
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x, y=smoothed, mode='lines',
+                             name='Smoothed error',
+                             line=dict(color='#3b82f6', width=2)))
+    fig.add_hline(y=threshold, line_dash='dash', line_color='#ef4444',
+                  annotation_text='Threshold',
+                  annotation_font_color='#ef4444')
+    fig.add_vline(x=inj, line_dash='dash', line_color='#22c55e',
+                  annotation_text='Injection', annotation_font_color='#22c55e')
+
+    # Regression line
+    lb_x = np.arange(prog.lookback_start, prog.lookback_end)
+    loc_x = lb_x - prog.lookback_start
+    reg_y = prog.slope * loc_x + prog.intercept
+    fig.add_trace(go.Scatter(x=lb_x, y=reg_y, mode='lines',
+                             name=f'Regression (R\u00b2={prog.r_squared:.3f})',
+                             line=dict(color='#f59e0b', width=3)))
+
+    # Extrapolation
+    if (prog.predicted_failure_sample is not None
+            and prog.predicted_failure_sample > prog.lookback_end):
+        ext_x = np.arange(prog.lookback_end,
+                          min(prog.predicted_failure_sample + 500,
+                              prog.lookback_end + 5000))
+        ext_loc = ext_x - prog.lookback_start
+        ext_y = prog.slope * ext_loc + prog.intercept
+        fig.add_trace(go.Scatter(x=ext_x, y=ext_y, mode='lines',
+                                 name='Extrapolation',
+                                 line=dict(color='#f59e0b', width=2,
+                                           dash='dot')))
+
+    if prog.predicted_failure_sample is not None:
+        fig.add_vline(x=prog.predicted_failure_sample, line_dash='dot',
+                      line_color='#8b5cf6',
+                      annotation_text=f'Predicted failure ({prog.predicted_failure_sample})',
+                      annotation_font_color='#8b5cf6')
+
+    title = fault_type.replace('_', ' ').title()
+    fig.update_layout(title=f'Prognostic \u2014 {title}',
+                      xaxis_title='Sample', yaxis_title='MSE',
+                      height=480, hovermode='x unified',
+                      margin=dict(l=60, r=30, t=60, b=50),
+                      legend=dict(orientation='h', yanchor='bottom', y=1.02,
+                                  xanchor='center', x=0.5))
+
+    pred = prog.predicted_failure_sample
+    info = (f"R\u00b2 = {prog.r_squared:.4f}  |  "
+            f"Predicted failure: sample {pred}" if pred else
+            f"R\u00b2 = {prog.r_squared:.4f}  |  No positive trend")
+    return apply_chart_styling(fig), info
 
 
 def create_app() -> gr.Blocks:
@@ -929,35 +1066,71 @@ def create_app() -> gr.Blocks:
                         'CBM Failure Injection Evaluation</h2></div>')
 
             with gr.Row():
-                cbm_fault_selector = gr.Radio(
+                cbm_fault = gr.Radio(
                     choices=["slow_drift", "load_imbalance",
                              "temporary_reduction", "spikes"],
-                    value="slow_drift",
-                    label="Fault Scenario",
-                )
-                cbm_mode = gr.Radio(
-                    choices=["Pre-computed", "Live compute"],
-                    value="Pre-computed",
-                    label="Mode",
-                )
-                cbm_run_btn = gr.Button("Run / Refresh", variant="primary")
+                    value="slow_drift", label="Fault Scenario")
+            with gr.Row():
+                cbm_sw = gr.Slider(minimum=5, maximum=200, value=50, step=5,
+                                   label="Smoothing window")
+                cbm_sf = gr.Slider(minimum=1.0, maximum=2.0, value=1.20,
+                                   step=0.05, label="Safety factor")
+            with gr.Row():
+                cbm_scale = gr.Slider(minimum=1, maximum=30, value=10, step=1,
+                                      label="Injection scale factor (live compute only)")
+                cbm_inj = gr.Slider(minimum=1000, maximum=25000, value=20000,
+                                    step=500,
+                                    label="Injection point — sample (live compute only)")
+                cbm_live_btn = gr.Button("Live Compute (GPU)", variant="secondary")
 
-            cbm_summary = gr.Markdown("Select a fault and click **Run / Refresh**.")
-            cbm_chart = gr.Plot()
+            cbm_summary = gr.Markdown("Select a fault scenario above.")
 
-            def _on_cbm_run(fault, mode):
-                use_pre = (mode == "Pre-computed")
-                fig, summary = build_cbm_error_chart(fault, use_precomputed=use_pre)
-                return apply_chart_styling(fig), summary
+            with gr.Tabs():
+                with gr.TabItem("Reconstruction Error"):
+                    cbm_error_chart = gr.Plot()
+                with gr.TabItem("Data Comparison"):
+                    cbm_data_chart = gr.Plot()
+                with gr.TabItem("Prognostic"):
+                    cbm_prog_info = gr.Markdown()
+                    cbm_prog_chart = gr.Plot()
 
-            cbm_run_btn.click(fn=_on_cbm_run,
-                              inputs=[cbm_fault_selector, cbm_mode],
-                              outputs=[cbm_chart, cbm_summary])
-            # Also update on fault selector change (instant when pre-computed)
-            cbm_fault_selector.change(
-                fn=lambda f, m: _on_cbm_run(f, m),
-                inputs=[cbm_fault_selector, cbm_mode],
-                outputs=[cbm_chart, cbm_summary])
+            # --- instant updates (from pre-computed / cached raw errors) ----
+            _cbm_outputs = [cbm_error_chart, cbm_summary,
+                            cbm_data_chart, cbm_prog_chart, cbm_prog_info]
+            _cbm_inputs = [cbm_fault, cbm_sw, cbm_sf]
+            _cbm_empty = [go.Figure(), "", go.Figure(), go.Figure(), ""]
+
+            def _refresh_all(fault, sw, sf):
+                # Guard: Gradio may fire events with None when hidden
+                # components first render
+                if not fault or sw is None or sf is None:
+                    return _cbm_empty
+                err_fig, summ = _build_error_chart(fault, int(sw), sf)
+                data_fig = _build_data_comparison(fault)
+                prog_fig, prog_info = _build_prognostic(fault, int(sw), sf)
+                return err_fig, summ, data_fig, prog_fig, prog_info
+
+            # Use .input (not .change) so the event only fires on user
+            # interaction, NOT when hidden components first render.
+            cbm_fault.input(fn=_refresh_all, inputs=_cbm_inputs,
+                            outputs=_cbm_outputs)
+            cbm_sw.release(fn=_refresh_all, inputs=_cbm_inputs,
+                           outputs=_cbm_outputs)
+            cbm_sf.release(fn=_refresh_all, inputs=_cbm_inputs,
+                           outputs=_cbm_outputs)
+
+            # --- live compute (GPU) -----------------------------------------
+            def _on_live_compute(fault, scale, inj_pt, sw, sf):
+                if not fault or scale is None or sw is None or sf is None:
+                    return _cbm_empty
+                cbm_live_compute(fault, scale,
+                                 injection_point=int(inj_pt) if inj_pt is not None else None)
+                return _refresh_all(fault, sw, sf)
+
+            cbm_live_btn.click(
+                fn=_on_live_compute,
+                inputs=[cbm_fault, cbm_scale, cbm_inj, cbm_sw, cbm_sf],
+                outputs=_cbm_outputs)
 
         # ============== NAVIGATION ==============
         all_pages = [home_page, realtime_page, charts_page, chats_page, cbm_page]
@@ -986,7 +1159,8 @@ def create_app() -> gr.Blocks:
 
         btn_realtime.click(fn=lambda: show_page("realtime"), outputs=all_pages)
         btn_chats.click(fn=lambda: show_page("chats"), outputs=all_pages)
-        btn_cbm.click(fn=lambda: show_page("cbm"), outputs=all_pages)
+        btn_cbm.click(fn=lambda: show_page("cbm"), outputs=all_pages).then(
+            fn=_refresh_all, inputs=_cbm_inputs, outputs=_cbm_outputs)
 
         back_btn_rt.click(fn=lambda: show_page("home"), outputs=all_pages)
         back_btn_charts.click(fn=lambda: show_page("realtime"), outputs=all_pages)
