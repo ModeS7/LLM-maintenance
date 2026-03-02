@@ -1085,7 +1085,7 @@ def create_app() -> gr.Blocks:
 
             cbm_summary = gr.Markdown("Select a fault scenario above.")
 
-            with gr.Tabs():
+            with gr.Tabs(elem_id="cbm-tabs") as cbm_tabs:
                 with gr.TabItem("Reconstruction Error"):
                     cbm_error_chart = gr.Plot()
                 with gr.TabItem("Data Comparison"):
@@ -1093,6 +1093,15 @@ def create_app() -> gr.Blocks:
                 with gr.TabItem("Prognostic"):
                     cbm_prog_info = gr.Markdown()
                     cbm_prog_chart = gr.Plot()
+
+            # Resize Plotly charts when switching tabs (they render
+            # with wrong dimensions while their tab is hidden)
+            cbm_tabs.change(fn=None, js="""
+                () => setTimeout(() => {
+                    document.querySelectorAll('#cbm-tabs .js-plotly-plot')
+                        .forEach(p => Plotly.Plots.resize(p));
+                }, 50)
+            """)
 
             # --- instant updates (from pre-computed / cached raw errors) ----
             _cbm_outputs = [cbm_error_chart, cbm_summary,
