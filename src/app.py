@@ -19,7 +19,7 @@ BASE_DIR = Path(__file__).parent.parent
 DATA_PATH = BASE_DIR / "data" / "Data_Pwr_All_S5.txt"
 MODEL_PATH = BASE_DIR / "models" / "autoencoder.pt"
 SCALER_PATH = BASE_DIR / "models" / "scaler.pkl"
-CBM_RESULTS_PATH = BASE_DIR / "outputs" / "cbm_evaluation" / "results.joblib"
+CBM_RESULTS_PATH = BASE_DIR / "docs" / "data" / "results.joblib"
 
 # Global instances
 data_loader: Optional[VesselDataLoader] = None
@@ -668,7 +668,7 @@ def cbm_live_compute(fault_type, scale_factor, injection_point=None):
     model, _ = load_model(str(MODEL_PATH))
     scaler = _jl.load(str(SCALER_PATH))
     device = next(model.parameters()).device
-    data_path = BASE_DIR / "next_step" / "variable_of_interest_for_PCC.joblib"
+    data_path = BASE_DIR / "docs" / "data" / "variable_of_interest_for_PCC.joblib"
     data_dict = _jl.load(str(data_path))
 
     healthy_arr = joblib_dict_to_array(data_dict)

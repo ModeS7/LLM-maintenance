@@ -3,7 +3,7 @@
 CBM Evaluation Pipeline — Top-level script.
 
 Loads model/scaler/data, runs all 4 fault scenarios, generates plots and a
-summary report under outputs/cbm_evaluation/.
+summary report under docs/data/.
 """
 import sys
 from pathlib import Path
@@ -32,10 +32,10 @@ from src.cbm import (
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-OUTPUT_DIR = PROJECT_ROOT / 'outputs' / 'cbm_evaluation'
+OUTPUT_DIR = PROJECT_ROOT / 'docs' / 'data'
 MODEL_PATH = PROJECT_ROOT / 'models' / 'autoencoder.pt'
 SCALER_PATH = PROJECT_ROOT / 'models' / 'scaler.pkl'
-DATA_PATH = PROJECT_ROOT / 'next_step' / 'variable_of_interest_for_PCC.joblib'
+DATA_PATH = PROJECT_ROOT / 'docs' / 'data' / 'variable_of_interest_for_PCC.joblib'
 
 FAULT_TYPES = ['slow_drift', 'load_imbalance', 'temporary_reduction', 'spikes']
 

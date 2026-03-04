@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .data_loader import VesselDataLoader, MODEL_FEATURES, VARIABLE_GROUPS
 from .model import TransformerAutoencoder, load_model
+from .cbm import sliding_window_average
 
 
 # Severity thresholds (based on percentile of reconstruction error)
@@ -666,6 +667,118 @@ class AnomalyDetector:
             return self.get_all_features_reconstruction(hours)
 
         return self._compute_all_features_reconstruction(data)
+
+    # ------------------------------------------------------------------
+    # Trend prediction
+    # ------------------------------------------------------------------
+
+    def _compute_trend_prediction(self, data, hours: float) -> Dict:
+        """
+        Core trend prediction logic: compute reconstruction errors over
+        a data window, smooth them, fit linear regression, and extrapolate
+        to the anomaly threshold.
+
+        Args:
+            data: DataWindow with features and timestamps
+            hours: Hours of data analysed (for reporting)
+
+        Returns:
+            Dict with trend prediction results
+        """
+        features = self.data_loader.normalize(data.features)
+
+        window_size = 120
+        n_total = len(features)
+
+        if n_total < window_size:
+            return {'error': 'Insufficient data for trend prediction'}
+
+        # Compute per-window reconstruction errors (stride=1)
+        n_windows = n_total - window_size + 1
+        errors = np.zeros(n_windows)
+
+        for i in range(n_windows):
+            window = features[i:i + window_size]
+            x = torch.FloatTensor(window[np.newaxis, ...]).to(self.device)
+            with torch.no_grad():
+                scores = self.model.compute_anomaly_score(x)
+            errors[i] = float(scores.mean())
+
+        # Smooth with W=50 moving average
+        smoothed = sliding_window_average(errors, window_size=50)
+
+        current_score = float(smoothed[-1])
+
+        # Linear regression on the smoothed errors
+        x_vals = np.arange(len(smoothed))
+        coeffs = np.polyfit(x_vals, smoothed, 1)
+        slope, intercept = float(coeffs[0]), float(coeffs[1])
+
+        # R-squared
+        y_pred = np.polyval(coeffs, x_vals)
+        ss_res = np.sum((smoothed - y_pred) ** 2)
+        ss_tot = np.sum((smoothed - smoothed.mean()) ** 2)
+        r_squared = float(1.0 - ss_res / (ss_tot + 1e-10))
+
+        # Classify trend direction
+        if slope > 1e-7:
+            trend = 'rising'
+        elif slope < -1e-7:
+            trend = 'falling'
+        else:
+            trend = 'stable'
+
+        # Extrapolate to threshold
+        predicted_failure_sample = None
+        estimated_minutes_to_threshold = None
+
+        if slope > 1e-12 and current_score < self.threshold:
+            samples_to_threshold = (self.threshold - current_score) / slope
+            predicted_failure_sample = int(len(smoothed) + samples_to_threshold)
+            # 5-second sampling interval
+            estimated_minutes_to_threshold = round(samples_to_threshold * 5 / 60, 1)
+
+        return {
+            'current_score': round(current_score, 6),
+            'trend': trend,
+            'slope': round(slope, 8),
+            'r_squared': round(r_squared, 4),
+            'predicted_failure_sample': predicted_failure_sample,
+            'estimated_minutes_to_threshold': estimated_minutes_to_threshold,
+            'threshold': round(self.threshold, 6),
+            'hours_analyzed': hours,
+            'data_points': len(smoothed),
+        }
+
+    def get_trend_prediction(self, hours: float = 2.0) -> Dict:
+        """
+        Analyse the reconstruction error trend and predict time to failure.
+
+        Args:
+            hours: Hours of recent data to analyse (default 2)
+
+        Returns:
+            Dict with current_score, trend, slope, r_squared,
+            predicted_failure_sample, estimated_minutes_to_threshold, threshold
+        """
+        n_samples = int(hours * 3600 / 5)  # 5-second sampling
+        data = self.data_loader.get_latest(n_samples=max(n_samples, 120))
+        return self._compute_trend_prediction(data, hours)
+
+    def get_trend_prediction_at_index(self, index: int, hours: float = 2.0) -> Dict:
+        """
+        Analyse the reconstruction error trend at a specific data index.
+
+        Args:
+            index: Index into the dataset
+            hours: Hours of data to analyse (default 2)
+
+        Returns:
+            Dict with trend prediction results
+        """
+        n_samples = int(hours * 3600 / 5)
+        data = self.data_loader.get_data_at_index(index, n_samples=max(n_samples, 120))
+        return self._compute_trend_prediction(data, hours)
 
     def _compute_all_features_reconstruction(self, data) -> Dict:
         """
