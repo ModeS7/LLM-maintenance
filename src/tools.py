@@ -93,6 +93,24 @@ TOOLS = [
                 "required": ["timestamp"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_trend_prediction",
+            "description": "Analyze the reconstruction error trend and predict time to failure using linear regression. Returns current trend direction, estimated time to threshold crossing, and confidence (R-squared).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "hours": {
+                        "type": "number",
+                        "description": "Hours of recent data to analyze for trend (default: 2)",
+                        "default": 2
+                    }
+                },
+                "required": []
+            }
+        }
     }
 ]
 
@@ -117,6 +135,7 @@ class ToolExecutor:
             "get_anomaly_history": self._get_anomaly_history,
             "get_variable_chart_data": self._get_variable_chart_data,
             "analyze_anomaly": self._analyze_anomaly,
+            "get_trend_prediction": self._get_trend_prediction,
         }
 
     def set_selected_time(self, index: int):
@@ -172,6 +191,12 @@ class ToolExecutor:
     def _analyze_anomaly(self, timestamp: str) -> Dict:
         """Analyze a specific anomaly."""
         return self.detector.analyze_anomaly(timestamp)
+
+    def _get_trend_prediction(self, hours: float = 2.0) -> Dict:
+        """Get trend prediction at selected time or current."""
+        if self.selected_time_index is not None:
+            return self.detector.get_trend_prediction_at_index(self.selected_time_index, hours)
+        return self.detector.get_trend_prediction(hours)
 
 
 def format_tool_result(result: Dict) -> str:
@@ -265,6 +290,25 @@ def format_tool_result(result: Dict) -> str:
         lines.append(f"Peak Score: {result.get('peak_anomaly_score', 0):.4f}")
         lines.append(f"Severity: {result.get('severity', 'unknown')}")
         lines.append(f"\nAnalysis: {result.get('analysis', 'N/A')}")
+
+    elif "trend" in result:
+        # Trend prediction
+        lines.append(f"Trend Analysis ({result.get('hours_analyzed', '?')}h window)")
+        lines.append(f"Current Score: {result.get('current_score', 0):.6f}")
+        lines.append(f"Threshold: {result.get('threshold', 0):.6f}")
+        lines.append(f"Trend: {result.get('trend', 'unknown').upper()}")
+        lines.append(f"Slope: {result.get('slope', 0):.8f}")
+        lines.append(f"R-squared: {result.get('r_squared', 0):.4f}")
+
+        est = result.get('estimated_minutes_to_threshold')
+        if est is not None:
+            lines.append(f"\nEstimated time to threshold: {est:.1f} minutes")
+            lines.append(f"Predicted failure sample: {result.get('predicted_failure_sample')}")
+        else:
+            if result.get('current_score', 0) >= result.get('threshold', 0):
+                lines.append("\nThreshold already exceeded.")
+            else:
+                lines.append("\nNo threshold crossing predicted (trend is not rising).")
 
     elif "actual" in result:
         # Chart data
