@@ -23,7 +23,7 @@ A proof-of-concept showing how conversational AI makes vessel monitoring accessi
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Tools (tools.py)                           │
 │   get_vessel_status │ get_variable_readings │ get_anomaly_history│
-│   get_variable_chart_data │ analyze_anomaly                     │
+│   get_variable_chart_data │ analyze_anomaly │ get_trend_prediction│
 └──────────────────────────────┬──────────────────────────────────┘
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
@@ -119,7 +119,7 @@ This trains the Transformer Autoencoder and saves to `models/autoencoder.pt`.
 
 **Options:**
 ```bash
-python -m src.train --epochs 50 --batch-size 32 --lr 1e-4
+python -m src.train --epochs 50 --batch-size 512 --lr 1e-4
 ```
 
 ### Step 4: Run the Demo
@@ -192,19 +192,27 @@ python -m src.app --host 0.0.0.0 --port 8080 --share
 | `get_anomaly_history` | Recent anomaly events |
 | `get_variable_chart_data` | Time series data for plotting |
 | `analyze_anomaly` | Detailed anomaly analysis |
+| `get_trend_prediction` | Trend analysis and time-to-failure prediction |
 
 ## Project Structure
 
 ```
-src/
-├── app.py           # Gradio UI
-├── llm_agent.py     # Ollama LLM with tool calling
-├── tools.py         # 5 tools LLM can call
-├── inference.py     # Transformer model loading & anomaly detection
-├── model.py         # Transformer Autoencoder architecture
-├── train.py         # Training script
-├── data_loader.py   # Vessel data parsing
-└── visualization.py # Chart utilities
+├── run_cbm_evaluation.py  # CBM evaluation pipeline (fault injection + detection)
+├── requirements.txt
+├── models/
+│   ├── autoencoder.pt     # Trained Transformer Autoencoder checkpoint
+│   └── scaler.pkl         # Fitted StandardScaler for feature normalization
+├── src/
+│   ├── app.py             # Gradio UI
+│   ├── llm_agent.py       # Ollama LLM with tool calling
+│   ├── tools.py           # 6 tools LLM can call
+│   ├── inference.py       # Transformer model loading & anomaly detection
+│   ├── model.py           # Transformer Autoencoder architecture
+│   ├── train.py           # Training script
+│   ├── cbm.py             # Condition-based maintenance pipeline
+│   ├── data_loader.py     # Vessel data parsing
+│   └── visualization.py   # Chart utilities
+└── static/                # UI assets
 ```
 
 ## Anomaly Severity
