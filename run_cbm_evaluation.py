@@ -255,14 +255,15 @@ def plot_spike_analysis(result):
 # Summary report
 # ---------------------------------------------------------------------------
 
-def write_summary_report(results, threshold, healthy_errors, scale_factor):
+def write_summary_report(results, threshold, healthy_errors, scale_factors):
     smoothed_healthy = sliding_window_average(healthy_errors, 50)
+    sf_str = ', '.join(f'{k}={v}x' for k, v in scale_factors.items())
     lines = [
         'CBM Evaluation Summary Report',
         '=' * 50,
         '',
-        f'Threshold:                    {threshold:.6f} (max smoothed healthy * 1.20)',
-        f'Injection scale factor:       {scale_factor}x',
+        f'Threshold:                    {threshold:.6f} (max smoothed healthy * 1.25)',
+        f'Injection scale factors:      {sf_str}',
         f'Healthy baseline max (raw):   {np.max(healthy_errors):.6f}',
         f'Healthy baseline max (smooth):{np.max(smoothed_healthy):.6f}',
         f'Healthy baseline mean:        {np.mean(healthy_errors):.6f}',
@@ -334,7 +335,7 @@ def main():
         window_size=120, stride=1, batch_size=256, device=device,
     )
     smoothed_healthy = sliding_window_average(healthy_errors, 50)
-    threshold = calibrate_threshold(smoothed_healthy, safety_factor=1.20)
+    threshold = calibrate_threshold(smoothed_healthy, safety_factor=1.25)
     print(f'  CBM Threshold: {threshold:.6f}')
 
     plot_healthy_baseline(healthy_errors, threshold)
@@ -343,7 +344,13 @@ def main():
     # 4. Run all fault scenarios
     #    scale_factor amplifies the original injection coefficients so that
     #    the offsets are meaningful relative to bus-load magnitudes (~750 kW std).
-    SCALE_FACTOR = 10
+    #    slow_drift uses scale=1 (upward drift is strong enough on its own).
+    SCALE_FACTORS = {
+        'slow_drift': 5,
+        'load_imbalance': 10,
+        'temporary_reduction': 10,
+        'spikes': 10,
+    }
     results = {}
     for fault in FAULT_TYPES:
         print(f'\nEvaluating: {fault}...')
@@ -352,7 +359,7 @@ def main():
             healthy_errors=healthy_errors,
             threshold=threshold,
             device=device,
-            scale_factor=SCALE_FACTOR,
+            scale_factor=SCALE_FACTORS[fault],
         )
         results[fault] = result
 
@@ -374,11 +381,11 @@ def main():
         print('Saved spike_noise_analysis.png')
 
     # 6. Summary report
-    write_summary_report(results, threshold, healthy_errors, SCALE_FACTOR)
+    write_summary_report(results, threshold, healthy_errors, SCALE_FACTORS)
 
     # 7. Save pre-computed results for the Gradio app
     saved = {'threshold': threshold, 'healthy_errors': healthy_errors,
-             'scale_factor': SCALE_FACTOR, 'results': {}}
+             'scale_factors': SCALE_FACTORS, 'results': {}}
     for fault, r in results.items():
         prog = None
         if r.prognostic:

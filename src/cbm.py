@@ -28,8 +28,8 @@ MODEL_TO_JOBLIB_KEY_MAP = {v: k for k, v in JOBLIB_TO_MODEL_KEY_MAP.items()}
 # ---------------------------------------------------------------------------
 FAILURE_CONFIGS = {
     'slow_drift': {
-        'injection_point': 20000,
-        'description': 'Gradual degradation of all bus loads',
+        'injection_point': 5000,
+        'description': 'Gradual increase of all bus loads',
     },
     'load_imbalance': {
         'injection_point': 20000,
@@ -125,8 +125,8 @@ def inject_failure(data_dict: dict, failure_type: str, scale_factor: float = 1.0
     injection = injection_point if injection_point is not None else config['injection_point']
 
     if failure_type == 'slow_drift':
-        initial_coeffs = [-50.0 * sf, -25.0 * sf, -10.0 * sf, -15.0 * sf]
-        passo = -0.05 * sf
+        initial_coeffs = [50.0 * sf, 25.0 * sf, 10.0 * sf, 15.0 * sf]
+        passo = 0.05 * sf
 
         for i, key in enumerate(keys_of_interest):
             mask = indices > injection
@@ -181,6 +181,10 @@ def inject_failure(data_dict: dict, failure_type: str, scale_factor: float = 1.0
 
     else:
         raise ValueError(f"Unknown failure type: {failure_type}")
+
+    # Clamp bus loads to zero — kW values cannot be negative
+    for key in keys_of_interest:
+        np.maximum(data[key], 0, out=data[key])
 
     return data
 

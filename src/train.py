@@ -18,7 +18,7 @@ from .model import TransformerAutoencoder, get_anomaly_threshold
 TRAIN_CONFIG = {
     'window_size': 120,        # 10 minutes at 5s sampling
     'stride': 12,              # 1 minute stride
-    'batch_size': 32,
+    'batch_size': 512,
     'epochs': 50,
     'learning_rate': 1e-4,
     'weight_decay': 1e-5,
@@ -217,6 +217,12 @@ def train(
 
     print(f"Training on device: {device}")
 
+    # Set random seed for reproducibility
+    torch.manual_seed(42)
+    np.random.seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(42)
+
     # Load data
     print("Loading data...")
     data_loader = VesselDataLoader(data_path)
@@ -251,6 +257,8 @@ def train(
     best_val_loss = float('inf')
     best_epoch = 0
     total_epochs = train_config['epochs']
+    train_losses = []
+    val_losses = []
 
     for epoch in range(total_epochs):
         # Train
@@ -261,6 +269,9 @@ def train(
 
         # Update scheduler
         scheduler.step(val_loss)
+
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
 
         # Build epoch summary line
         epoch_summary = f"Epoch {epoch+1}/{total_epochs}: Train Loss = {train_loss:.6f}, Val Loss = {val_loss:.6f}"
@@ -281,7 +292,9 @@ def train(
                 'train_loss': train_loss,
                 'val_loss': val_loss,
                 'threshold': threshold,
-                'config': model_config
+                'config': model_config,
+                'train_losses': train_losses,
+                'val_losses': val_losses,
             }
             torch.save(checkpoint, model_save_path)
             epoch_summary += f" [BEST - threshold={threshold:.6f}]"
@@ -290,6 +303,14 @@ def train(
         print()  # Blank line between epochs
 
     print(f"\nTraining complete. Best epoch: {best_epoch + 1}, Best val loss: {best_val_loss:.6f}")
+
+    # Save full loss history alongside the model
+    loss_history_path = str(Path(model_save_path).parent / 'loss_history.npz')
+    np.savez(loss_history_path,
+             train_losses=np.array(train_losses),
+             val_losses=np.array(val_losses),
+             best_epoch=best_epoch)
+    print(f"Loss history saved to {loss_history_path}")
 
     # Evaluate on test set
     print("\nEvaluating on test set...")
