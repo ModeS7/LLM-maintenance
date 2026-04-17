@@ -6,3 +6,5 @@ a.out
 /data/
 *.joblib
 docs/
+models/autoencoder.pt
+models/loss_history.npz
